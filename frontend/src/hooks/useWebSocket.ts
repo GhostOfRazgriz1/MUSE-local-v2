@@ -8,7 +8,6 @@ import { getApiToken } from "./useApiToken";
 const _loc = typeof window !== "undefined" ? window.location : { protocol: "http:", host: "localhost:8080" };
 const _wsProto = _loc.protocol === "https:" ? "wss:" : "ws:";
 const WS_BASE = `${_wsProto}//${_loc.host}/api/ws/chat`;
-const API_BASE = `${_loc.protocol}//${_loc.host}/api`;
 const MAX_BACKOFF = 30000;
 const INITIAL_BACKOFF = 1000;
 
@@ -24,7 +23,7 @@ export interface UseWebSocketReturn {
   historyMessages: DisplayMessage[];
 }
 
-export function useWebSocket(requestedSessionId: string | null, reconnectToken?: number): UseWebSocketReturn {
+export function useWebSocket(requestedSessionId: string | null, reconnectToken?: number, paused?: boolean): UseWebSocketReturn {
   const [connected, setConnected] = useState(false);
   const [events, setEvents] = useState<ChatEvent[]>([]);
   const [lastEvent, setLastEvent] = useState<ChatEvent | null>(null);
@@ -37,23 +36,16 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
   const mountedRef = useRef(true);
   const requestedSessionRef = useRef(requestedSessionId);
 
-  // Track whether the user sent at least one message in this session.
-  // If they didn't and the session was newly created (not resumed),
-  // we delete it on disconnect to avoid phantom empty sessions.
-  const userSentMessageRef = useRef(false);
-  const sessionIdRef = useRef<string | null>(null);
-  // true when we opened a NEW session (requestedSessionId was null),
-  // false when we resumed an existing one.
-  const isNewSessionRef = useRef(!requestedSessionId);
-  // true if restored history had messages (session already had content)
-  const hadHistoryRef = useRef(false);
-
   // Keep ref in sync so reconnect uses latest value
   useEffect(() => {
     requestedSessionRef.current = requestedSessionId;
   }, [requestedSessionId]);
 
+  const pausedRef = useRef(!!paused);
+  pausedRef.current = !!paused;
+
   const connect = useCallback(() => {
+    if (pausedRef.current) return;
     if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
 
     // Fetch token first, then open WebSocket
@@ -91,17 +83,11 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
 
           // Intercept session-level events
           if (parsed.type === "session_started") {
-            sessionIdRef.current = parsed.session_id;
             setSessionId(parsed.session_id);
             return;
           }
           if (parsed.type === "history") {
             const msgs = (parsed as any).messages || [];
-            // If the restored history contains user messages, the session
-            // already had interaction — don't clean it up on close.
-            if (msgs.some((m: HistoryMessage) => m.role === "user")) {
-              hadHistoryRef.current = true;
-            }
             // Convert persisted messages into DisplayMessage[]
             const restored: DisplayMessage[] = msgs.map(
               (m: HistoryMessage) => {
@@ -173,7 +159,6 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
 
   const sendMessage = useCallback((content: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      userSentMessageRef.current = true;
       wsRef.current.send(JSON.stringify({ type: "message", content }));
     }
   }, []);
@@ -184,53 +169,9 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
     }
   }, []);
 
-  // Delete an empty session that was newly created but never used.
-  // Uses authenticated fetch through the Vite proxy for session switches,
-  // and sendBeacon (unauthenticated, best-effort) for page unload only.
-  const cleanupEmptySession = useCallback((isUnload = false) => {
-    const sid = sessionIdRef.current;
-    if (!sid) return;
-    if (userSentMessageRef.current) return;  // user interacted — keep it
-    if (!isNewSessionRef.current) return;     // resumed existing — keep it
-    if (hadHistoryRef.current) return;        // had prior messages — keep it
-
-    if (isUnload) {
-      // Page unload — sendBeacon is best-effort (can't carry auth)
-      const url = `${API_BASE}/sessions/${sid}/close`;
-      navigator.sendBeacon?.(url, new Blob([], { type: "text/plain" }));
-      return;
-    }
-
-    // Normal session switch — use authenticated fetch via proxy
-    const relUrl = `/api/sessions/${sid}/close`;
-    getApiToken().then((t) => {
-      const headers: Record<string, string> = {};
-      if (t) headers["Authorization"] = `Bearer ${t}`;
-      fetch(relUrl, { method: "POST", keepalive: true, headers }).catch(() => {});
-    }).catch(() => {});
-  }, []);
-
-  // Register a beforeunload listener — this is the ONLY reliable way to
-  // fire cleanup when the user closes the tab or browser. React's
-  // useEffect cleanup does NOT run on tab close.
-  useEffect(() => {
-    const onBeforeUnload = () => cleanupEmptySession(true);
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [cleanupEmptySession]);
-
-  // Reconnect when the requested session changes
+  // Reconnect when the requested session or paused state changes
   useEffect(() => {
     mountedRef.current = true;
-
-    // Before switching sessions, clean up the previous one if empty
-    cleanupEmptySession();
-
-    // Reset tracking for the new session
-    userSentMessageRef.current = false;
-    sessionIdRef.current = null;
-    isNewSessionRef.current = !requestedSessionId;
-    hadHistoryRef.current = false;
 
     // Reset UI state
     setEvents([]);
@@ -255,7 +196,7 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
         wsRef.current.close();
       }
     };
-  }, [requestedSessionId, reconnectToken, connect, cleanupEmptySession]);
+  }, [requestedSessionId, reconnectToken, paused, connect]);
 
   return { sendMessage, sendRaw, lastEvent, connected, events, sessionId, historyMessages };
 }

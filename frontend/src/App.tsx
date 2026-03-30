@@ -22,7 +22,7 @@ function App() {
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null); // null = loading
 
   const { sendMessage, sendRaw, connected, events, sessionId, historyMessages } =
-    useWebSocket(requestedSessionId, reconnectToken);
+    useWebSocket(requestedSessionId, reconnectToken, needsSetup !== false);
   const [view, setView] = useState<View>("chat");
   const [sidebarOpen, setSidebarOpen] = useState(true); // open by default on desktop
   const [taskPopoverOpen, setTaskPopoverOpen] = useState(false);

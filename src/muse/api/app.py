@@ -33,6 +33,7 @@ async def lifespan(app: FastAPI):
     from muse.debug import DebugTracer, set_tracer
 
     config = Config()
+    config.ensure_dirs()
 
     # Initialize authentication — generates or loads the bearer token
     init_auth(config.data_dir)

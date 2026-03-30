@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS model_overrides (
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL DEFAULT 'New conversation',
+    branch_head_id INTEGER,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -173,10 +174,12 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL,
     event_type TEXT NOT NULL DEFAULT 'response',
     metadata_json TEXT,
+    parent_id INTEGER REFERENCES messages(id),
     created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id ASC);
+CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_id);
 
 -- Scheduled background tasks
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -209,7 +212,6 @@ CREATE TABLE IF NOT EXISTS plans (
 );
 
 CREATE INDEX IF NOT EXISTS idx_plans_session ON plans(session_id, status);
-CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_id);
 """
 
 WAL_DB_SCHEMA = """

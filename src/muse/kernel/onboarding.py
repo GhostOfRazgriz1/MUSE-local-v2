@@ -97,7 +97,20 @@ class OnboardingFlow:
         return not config.identity_path.exists()
 
     async def start(self) -> AsyncIterator[dict]:
-        """Have the LLM send the opening message."""
+        """Have the LLM send the opening message.
+
+        If the onboarding was interrupted (reconnect), replay the last
+        assistant message so the user can pick up where they left off
+        instead of restarting the entire conversation.
+        """
+        if self._history:
+            # Reconnect — replay the last assistant message
+            for msg in reversed(self._history):
+                if msg["role"] == "assistant":
+                    yield _response(msg["content"])
+                    return
+            # Shouldn't happen, but fall through to fresh start
+
         result = await self._provider.complete(
             model=self._model,
             messages=[{"role": "user", "content": "(The user just opened the app for the first time. Start the onboarding.)"}],

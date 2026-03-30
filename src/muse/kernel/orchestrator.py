@@ -678,8 +678,26 @@ class Orchestrator:
         """
         # Onboarding intercept — first-session setup flow
         if self._onboarding and self._onboarding.is_active:
+            await self.ensure_session()
+            # Persist user message
+            try:
+                await self._session_repo.add_message(
+                    self._session_id, "user", user_message,
+                    event_type="user_message",
+                )
+            except Exception:
+                pass
             async for event in self._onboarding.handle_answer(user_message):
                 yield event
+                # Persist assistant response
+                if event.get("type") == "response" and self._session_id:
+                    try:
+                        await self._session_repo.add_message(
+                            self._session_id, "assistant", event["content"],
+                            event_type="response",
+                        )
+                    except Exception:
+                        pass
             if not self._onboarding.is_active:
                 self._identity = load_identity(self._config)
                 self._context_assembler._identity = self._identity

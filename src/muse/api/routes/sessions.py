@@ -112,12 +112,3 @@ async def list_branches(session_id: str):
     return {"branches": branches}
 
 
-@router.post("/sessions/{session_id}/close")
-async def close_session(session_id: str):
-    """Lightweight session cleanup for sendBeacon / page-unload.
-
-    navigator.sendBeacon can only POST, so the frontend sends
-    POST /sessions/{id}/close during page unload to clean up
-    empty sessions.
-    """
-    return await delete_session(session_id, purge_memories=False)

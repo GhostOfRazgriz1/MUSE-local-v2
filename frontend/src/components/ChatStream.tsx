@@ -538,35 +538,15 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
             <div className="chat-empty-icon">
               <IconBot size={28} />
             </div>
-            <div className="chat-empty-title">
-              {connected ? "Start a conversation" : "Connecting..."}
-            </div>
-            <div className="chat-empty-text">
-              {connected
-                ? "Type a message below, or try one of these:"
-                : "Establishing connection to MUSE..."}
-            </div>
-            {connected && (
-              <div className="suggestion-chips">
-                {[
-                  "Search the web for recent news",
-                  "Create a note about my project ideas",
-                  "Set a reminder for tomorrow at 9am",
-                  "What can you help me with?",
-                ].map((text) => (
-                  <button
-                    key={text}
-                    className="suggestion-chip"
-                    onClick={() => {
-                      const id = ++msgIdRef.current;
-                      setMessages((prev) => [...prev, { role: "user" as const, content: text, _id: id }]);
-                      onSend(text);
-                    }}
-                  >
-                    {text}
-                  </button>
-                ))}
+            {connected ? (
+              <div className="typing-indicator" aria-label="Agent is typing">
+                <span /><span /><span />
               </div>
+            ) : (
+              <>
+                <div className="chat-empty-title">Connecting...</div>
+                <div className="chat-empty-text">Establishing connection to MUSE...</div>
+              </>
             )}
           </div>
         ) : (

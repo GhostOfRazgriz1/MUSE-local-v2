@@ -34,7 +34,8 @@ async def chat_websocket(
     """WebSocket endpoint for the chat stream.
 
     Query params:
-        session_id — resume an existing session. If omitted a new session is created.
+        session_id — resume an existing session. If omitted, session
+                     creation is deferred until the user sends a message.
         token      — bearer token for authentication.
         tz         — IANA timezone (e.g. "America/New_York") from the browser.
 
@@ -60,37 +61,42 @@ async def chat_websocket(
         orchestrator._user_tz = tz
 
     # ------------------------------------------------------------------
-    # Session bootstrap: resume existing or create new
+    # Session bootstrap
     # ------------------------------------------------------------------
+    # For resumed sessions: load immediately and send history.
+    # For new sessions: defer creation until the user actually sends a
+    # message — this prevents phantom empty sessions from accumulating
+    # when the user opens the app but never types.
+    # ------------------------------------------------------------------
+    resumed = False
     if session_id:
         loaded = await orchestrator.set_session(session_id)
-        if not loaded:
-            # Invalid session_id — create fresh
-            session = await orchestrator.create_session()
-            session_id = session["id"]
-    else:
-        session = await orchestrator.create_session()
-        session_id = session["id"]
+        if loaded:
+            resumed = True
+        else:
+            # Invalid session_id — treat as new (deferred)
+            session_id = None
 
-    get_tracer().ws_connect(session_id)
+    get_tracer().ws_connect(session_id or "(deferred)")
 
-    # Tell the client which session we're using
-    await websocket.send_json({
-        "type": "session_started",
-        "session_id": session_id,
-        "branch_head_id": orchestrator._branch_head_id,
-    })
-
-    # Send persisted message history so the UI can restore previous conversation
-    messages = await orchestrator.session_repo.get_messages(
-        session_id, branch_head_id=orchestrator._branch_head_id,
-    )
-    if messages:
+    if resumed:
+        # Tell the client which session we're using
         await websocket.send_json({
-            "type": "history",
+            "type": "session_started",
             "session_id": session_id,
-            "messages": messages,
+            "branch_head_id": orchestrator._branch_head_id,
         })
+
+        # Send persisted message history so the UI can restore previous conversation
+        messages = await orchestrator.session_repo.get_messages(
+            session_id, branch_head_id=orchestrator._branch_head_id,
+        )
+        if messages:
+            await websocket.send_json({
+                "type": "history",
+                "session_id": session_id,
+                "messages": messages,
+            })
 
     # Subscribe to orchestrator events
     event_queue = orchestrator.subscribe()
@@ -106,13 +112,36 @@ async def chat_websocket(
 
     forward_task = asyncio.create_task(forward_events())
 
-    # Agent speaks first — send greeting or onboarding welcome (only for fresh sessions)
-    if not messages:
+    # Agent speaks first — send greeting for new sessions, or resume
+    # onboarding if it's still active.
+    onboarding_active = (
+        orchestrator._onboarding is not None
+        and orchestrator._onboarding.is_active
+    )
+    if not resumed or onboarding_active:
         try:
             async for event in orchestrator.get_greeting():
                 await websocket.send_json(event)
         except Exception as e:
             logger.error(f"Greeting error: {e}")
+
+    # ------------------------------------------------------------------
+    # Helper: ensure a session exists before processing user-initiated
+    # events (messages, permission approvals).  On the first call this
+    # creates the session and notifies the frontend.
+    # ------------------------------------------------------------------
+    async def _ensure_session() -> str:
+        nonlocal session_id
+        if session_id:
+            return session_id
+        session = await orchestrator.create_session()
+        session_id = session["id"]
+        await websocket.send_json({
+            "type": "session_started",
+            "session_id": session_id,
+            "branch_head_id": None,
+        })
+        return session_id
 
     # ------------------------------------------------------------------
     # Incoming message queue — decouples WebSocket reads from processing
@@ -195,6 +224,7 @@ async def chat_websocket(
                 content = data.get("content", "").strip()
                 if not content:
                     continue
+                await _ensure_session()
                 # Run each message as an independent task so the user
                 # can send new messages while skills are still running.
                 task = asyncio.create_task(
@@ -204,6 +234,7 @@ async def chat_websocket(
                 task.add_done_callback(active_msg_tasks.discard)
 
             elif msg_type == "approve_permission":
+                await _ensure_session()
                 await websocket.send_json({
                     "type": "permission_approved",
                     "request_id": data["request_id"],
@@ -218,6 +249,7 @@ async def chat_websocket(
                 task.add_done_callback(active_msg_tasks.discard)
 
             elif msg_type == "deny_permission":
+                await _ensure_session()
                 await websocket.send_json({
                     "type": "permission_denied",
                     "request_id": data["request_id"],
@@ -230,10 +262,10 @@ async def chat_websocket(
 
     except WebSocketDisconnect:
         logger.info("Chat WebSocket disconnected")
-        get_tracer().ws_disconnect(session_id)
+        get_tracer().ws_disconnect(session_id or "(none)")
     except Exception as e:
         logger.error(f"Chat WebSocket error: {e}")
-        get_tracer().error("ws", str(e), session_id=session_id)
+        get_tracer().error("ws", str(e), session_id=session_id or "(none)")
     finally:
         # Cancel any still-running message tasks
         for t in active_msg_tasks:
