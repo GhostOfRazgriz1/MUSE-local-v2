@@ -8,7 +8,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 
-const STORAGE_KEY = "agent-os-notifications-enabled";
+const STORAGE_KEY = "muse-notifications-enabled";
 
 export function useNotifications() {
   const [permitted, setPermitted] = useState(false);
@@ -51,7 +51,7 @@ export function useNotifications() {
         new Notification(title, {
           body,
           icon: "/icon.png",
-          tag: `agent-os-${Date.now()}`, // unique tag prevents stacking
+          tag: `muse-${Date.now()}`, // unique tag prevents stacking
         });
       } catch {
         // Notification API may fail in some contexts (e.g., insecure origin)

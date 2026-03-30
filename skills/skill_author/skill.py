@@ -20,10 +20,10 @@ async def run(ctx) -> dict:
         return _err("No skill description provided.")
 
     # Import authoring components
-    from agent_os.skills.authoring.sdk_contract import (
+    from muse.skills.authoring.sdk_contract import (
         SDK_API_REFERENCE, MANIFEST_RULES, CODE_RULES, VALID_PERMISSIONS,
     )
-    from agent_os.skills.authoring.auditor import run_static_checks, run_llm_review
+    from muse.skills.authoring.auditor import run_static_checks, run_llm_review
 
     await ctx.user.notify(
         f"Generating skill from description:\n> {instruction}"
@@ -32,12 +32,12 @@ async def run(ctx) -> dict:
     # ── Step 1: Generate skill code ─────────────────────────────
     code = await ctx.llm.complete(
         prompt=(
-            f"Write a complete Agent OS skill based on this description:\n\n"
+            f"Write a complete MUSE skill based on this description:\n\n"
             f"{instruction}\n\n"
             f"Output ONLY the Python code. No markdown fences, no explanation."
         ),
         system=(
-            "You are a skill author for Agent OS — a consumer agent platform.\n"
+            "You are a skill author for MUSE — a consumer agent platform.\n"
             "You write Python skills that run inside a sandboxed environment.\n\n"
             + SDK_API_REFERENCE + "\n\n" + CODE_RULES
         ),
@@ -166,7 +166,7 @@ async def _retry(ctx, instruction, code, manifest, issues,
             f"Fix ALL the issues listed above. Output ONLY the corrected Python code."
         ),
         system=(
-            "You are fixing a generated Agent OS skill. "
+            "You are fixing a generated MUSE skill. "
             "Fix EVERY issue listed. Do not skip any.\n\n"
             + api_ref + "\n\n" + code_rules
         ),

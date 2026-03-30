@@ -2,7 +2,7 @@
     "name": "Search",
     "version": "0.3.0",
     "description": "Search the web for information, look things up online, research topics. Ask about anything: people, places, facts, current events, technical questions.",
-    "author": "Agent OS",
+    "author": "MUSE",
     "permissions": ["web:fetch", "memory:read", "memory:write"],
     "memory_namespaces": ["search"],
     "allowed_domains": [

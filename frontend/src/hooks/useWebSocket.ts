@@ -2,8 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatEvent, DisplayMessage, HistoryMessage } from "../types/events";
 import { getApiToken } from "./useApiToken";
 
-const WS_BASE = "ws://localhost:8080/api/ws/chat";
-const API_BASE = "http://localhost:8080/api";
+// Derive WebSocket and API URLs from the current page location.
+// In dev (Vite proxy), this resolves to localhost:3000 → proxied to :8080.
+// In production (static files served by backend), this hits :8080 directly.
+const _loc = typeof window !== "undefined" ? window.location : { protocol: "http:", host: "localhost:8080" };
+const _wsProto = _loc.protocol === "https:" ? "wss:" : "ws:";
+const WS_BASE = `${_wsProto}//${_loc.host}/api/ws/chat`;
+const API_BASE = `${_loc.protocol}//${_loc.host}/api`;
 const MAX_BACKOFF = 30000;
 const INITIAL_BACKOFF = 1000;
 
@@ -64,6 +69,10 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
       if (apiToken) {
         params.set("token", apiToken);
       }
+      // Send the browser's timezone so the agent knows the user's local time
+      try {
+        params.set("tz", Intl.DateTimeFormat().resolvedOptions().timeZone);
+      } catch { /* Intl not available — server falls back to UTC */ }
       const qs = params.toString();
       const url = qs ? `${WS_BASE}?${qs}` : WS_BASE;
       const ws = new WebSocket(url);

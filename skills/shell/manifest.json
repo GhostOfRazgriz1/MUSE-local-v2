@@ -1,0 +1,20 @@
+{
+    "name": "Shell",
+    "version": "0.1.0",
+    "description": "Open files, URLs, and applications. Run shell commands. Use when the user wants to open something, launch an app, check git status, run a build, or execute any terminal command.",
+    "author": "MUSE",
+    "permissions": ["memory:read", "memory:write", "file:read"],
+    "memory_namespaces": ["shell"],
+    "allowed_domains": [],
+    "max_tokens": 4000,
+    "timeout_seconds": 60,
+    "isolation_tier": "lightweight",
+    "entry_point": "skill.py",
+    "is_first_party": true,
+    "supports_rollback": false,
+    "idempotent": false,
+    "actions": [
+        {"id": "open", "description": "Open a file, URL, or application in the default handler"},
+        {"id": "run", "description": "Run a shell command and return the output"}
+    ]
+}

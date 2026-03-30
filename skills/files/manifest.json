@@ -2,7 +2,7 @@
     "name": "Files",
     "version": "0.3.0",
     "description": "Filesystem operations: read, write, edit, copy, move, delete files and directories. Create content, save conversation results to disk.",
-    "author": "Agent OS",
+    "author": "MUSE",
     "permissions": ["file:read", "file:write", "memory:read", "memory:write"],
     "memory_namespaces": ["files"],
     "allowed_domains": [],

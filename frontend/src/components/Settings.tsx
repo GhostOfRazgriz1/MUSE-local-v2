@@ -96,7 +96,7 @@ type FontSizePreset = (typeof FONT_SIZE_OPTIONS)[number]["value"];
 
 export function getStoredFontSize(): FontSizePreset {
   try {
-    const v = localStorage.getItem("agent-os-font-size");
+    const v = localStorage.getItem("muse-font-size");
     if (v && FONT_SIZE_OPTIONS.some((o) => o.value === v)) return v as FontSizePreset;
   } catch {}
   return "comfortable";
@@ -110,7 +110,7 @@ export function applyFontSize(preset: FontSizePreset) {
     html.setAttribute("data-font-size", preset);
   }
   try {
-    localStorage.setItem("agent-os-font-size", preset);
+    localStorage.setItem("muse-font-size", preset);
   } catch {}
 }
 
@@ -138,7 +138,7 @@ const FONT_FAMILY_CSS: Record<FontFamilyPreset, string> = {
 
 export function getStoredFontFamily(): FontFamilyPreset {
   try {
-    const v = localStorage.getItem("agent-os-font-family");
+    const v = localStorage.getItem("muse-font-family");
     if (v && FONT_FAMILY_OPTIONS.some((o) => o.value === v)) return v as FontFamilyPreset;
   } catch {}
   return "inter";
@@ -152,7 +152,7 @@ export function applyFontFamily(preset: FontFamilyPreset) {
     html.setAttribute("data-font-family", preset);
   }
   try {
-    localStorage.setItem("agent-os-font-family", preset);
+    localStorage.setItem("muse-font-family", preset);
   } catch {}
 }
 
@@ -197,7 +197,7 @@ type PalettePreset = (typeof COLOR_PALETTE_OPTIONS)[number]["value"];
 
 export function getStoredPalette(): PalettePreset {
   try {
-    const v = localStorage.getItem("agent-os-palette");
+    const v = localStorage.getItem("muse-palette");
     if (v && COLOR_PALETTE_OPTIONS.some((o) => o.value === v)) return v as PalettePreset;
   } catch {}
   return "midnight";
@@ -211,7 +211,7 @@ export function applyPalette(preset: PalettePreset) {
     html.setAttribute("data-palette", preset);
   }
   try {
-    localStorage.setItem("agent-os-palette", preset);
+    localStorage.setItem("muse-palette", preset);
   } catch {}
 }
 
@@ -508,7 +508,7 @@ function SkillsTab() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<SkillView>(() => {
     try {
-      const v = localStorage.getItem("agent-os-skill-view");
+      const v = localStorage.getItem("muse-skill-view");
       return v === "list" ? "list" : "grid";
     } catch { return "grid"; }
   });
@@ -523,8 +523,17 @@ function SkillsTab() {
 
   const handleViewChange = (v: SkillView) => {
     setView(v);
-    try { localStorage.setItem("agent-os-skill-view", v); } catch {}
+    try { localStorage.setItem("muse-skill-view", v); } catch {}
   };
+
+  const handleUninstall = useCallback(async (skillId: string) => {
+    try {
+      const res = await apiFetch(`/api/skills/${skillId}`, { method: "DELETE" });
+      if (res.ok) {
+        setSkills((prev) => prev.filter((s) => s.skill_id !== skillId));
+      }
+    } catch {}
+  }, []);
 
   if (loading) return <SettingsLoader />;
 
@@ -578,7 +587,7 @@ function SkillsTab() {
           {firstParty.length > 0 && (
             <SettingsSection
               title="Built-in Skills"
-              description="First-party skills that ship with Agent OS."
+              description="First-party skills that ship with MUSE."
             >
               {view === "grid" ? (
                 <div className="skill-grid">
@@ -604,13 +613,13 @@ function SkillsTab() {
               {view === "grid" ? (
                 <div className="skill-grid">
                   {thirdParty.map((skill) => (
-                    <SkillCard key={skill.skill_id} skill={skill} />
+                    <SkillCard key={skill.skill_id} skill={skill} onUninstall={handleUninstall} />
                   ))}
                 </div>
               ) : (
                 <div className="skill-list">
                   {thirdParty.map((skill) => (
-                    <SkillListItem key={skill.skill_id} skill={skill} />
+                    <SkillListItem key={skill.skill_id} skill={skill} onUninstall={handleUninstall} />
                   ))}
                 </div>
               )}
@@ -622,8 +631,9 @@ function SkillsTab() {
   );
 }
 
-function SkillCard({ skill }: { skill: SkillInfo }) {
+function SkillCard({ skill, onUninstall }: { skill: SkillInfo; onUninstall?: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const tier = TIER_LABELS[skill.isolation_tier] || TIER_LABELS.standard;
   const hasCredentials = skill.credentials && skill.credentials.length > 0;
 
@@ -637,8 +647,16 @@ function SkillCard({ skill }: { skill: SkillInfo }) {
           <div className="skill-card-name">{skill.name}</div>
           <span className="skill-card-version">v{skill.version}</span>
         </div>
-        {skill.is_first_party && (
+        {skill.is_first_party ? (
           <span className="skill-badge first-party">Built-in</span>
+        ) : onUninstall && (
+          <button
+            className="skill-uninstall-btn"
+            onClick={() => setConfirmDelete(true)}
+            title="Uninstall skill"
+          >
+            <IconTrash size={13} />
+          </button>
         )}
       </div>
 
@@ -740,12 +758,22 @@ function SkillCard({ skill }: { skill: SkillInfo }) {
           )}
         </div>
       )}
+
+      {confirmDelete && onUninstall && (
+        <div className="skill-card-confirm">
+          <span>Uninstall <strong>{skill.name}</strong>?</span>
+          <div className="skill-card-confirm-actions">
+            <button className="btn btn-sm btn-ghost" onClick={() => setConfirmDelete(false)}>Cancel</button>
+            <button className="btn btn-sm btn-danger" onClick={() => onUninstall(skill.skill_id)}>Uninstall</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /** List-view skill row — full-width with dividers, details button on the right. */
-function SkillListItem({ skill }: { skill: SkillInfo }) {
+function SkillListItem({ skill, onUninstall }: { skill: SkillInfo; onUninstall?: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const tier = TIER_LABELS[skill.isolation_tier] || TIER_LABELS.standard;
   const hasCredentials = skill.credentials && skill.credentials.length > 0;
@@ -775,6 +803,17 @@ function SkillListItem({ skill }: { skill: SkillInfo }) {
             <div className="skill-list-desc">{skill.description}</div>
           )}
         </div>
+        {!skill.is_first_party && onUninstall && (
+          <button
+            className="skill-uninstall-btn"
+            onClick={() => {
+              if (confirm(`Uninstall ${skill.name}?`)) onUninstall(skill.skill_id);
+            }}
+            title="Uninstall skill"
+          >
+            <IconTrash size={13} />
+          </button>
+        )}
         <button
           className="skill-list-toggle"
           onClick={() => setExpanded(!expanded)}

@@ -2,7 +2,7 @@
     "name": "Webpage Reader",
     "version": "0.1.0",
     "description": "Read and extract text content from web pages. Fetch a URL, parse the HTML, and return clean readable text for summarization or analysis. Use when the user provides a link or asks to read a webpage.",
-    "author": "Agent OS",
+    "author": "MUSE",
     "permissions": ["web:fetch", "memory:read", "memory:write"],
     "memory_namespaces": ["webpage_reader"],
     "allowed_domains": [],

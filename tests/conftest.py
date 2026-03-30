@@ -1,4 +1,4 @@
-"""Shared fixtures for Agent OS integration tests.
+"""Shared fixtures for MUSE integration tests.
 
 Provides:
 - Temporary SQLite databases (agent.db + wal.db)
@@ -160,7 +160,7 @@ async def temp_dir():
 @pytest_asyncio.fixture
 async def agent_db(temp_dir):
     """Initialize a fresh agent.db with the full schema."""
-    from agent_os.db.schema import init_agent_db
+    from muse.db.schema import init_agent_db
     db_path = str(temp_dir / "agent.db")
     db = await init_agent_db(db_path)
     yield db
@@ -170,7 +170,7 @@ async def agent_db(temp_dir):
 @pytest_asyncio.fixture
 async def wal_db(temp_dir):
     """Initialize a fresh wal.db."""
-    from agent_os.db.schema import init_wal_db
+    from muse.db.schema import init_wal_db
     db_path = str(temp_dir / "wal.db")
     db = await init_wal_db(db_path)
     yield db
@@ -184,19 +184,19 @@ async def wal_db(temp_dir):
 @pytest_asyncio.fixture
 async def embedding_service():
     """Real embedding service for accurate semantic tests."""
-    from agent_os.memory.embeddings import EmbeddingService
+    from muse.memory.embeddings import EmbeddingService
     return EmbeddingService("all-MiniLM-L6-v2")
 
 
 @pytest_asyncio.fixture
 async def memory_repo(agent_db, embedding_service):
-    from agent_os.memory.repository import MemoryRepository
+    from muse.memory.repository import MemoryRepository
     return MemoryRepository(agent_db, embedding_service)
 
 
 @pytest_asyncio.fixture
 async def memory_cache():
-    from agent_os.memory.cache import MemoryCache
+    from muse.memory.cache import MemoryCache
     return MemoryCache(budget_mb=10)
 
 
@@ -212,7 +212,7 @@ async def mock_provider():
 @pytest_asyncio.fixture
 async def config(temp_dir):
     """Config pointing at the temp directory."""
-    from agent_os.config import Config
+    from muse.config import Config
     cfg = Config(data_dir=temp_dir)
     cfg.ensure_dirs()
     return cfg
@@ -220,49 +220,49 @@ async def config(temp_dir):
 
 @pytest_asyncio.fixture
 async def permission_repo(agent_db):
-    from agent_os.permissions.repository import PermissionRepository
+    from muse.permissions.repository import PermissionRepository
     return PermissionRepository(agent_db)
 
 
 @pytest_asyncio.fixture
 async def trust_budget(agent_db):
-    from agent_os.permissions.trust_budget import TrustBudgetManager
+    from muse.permissions.trust_budget import TrustBudgetManager
     return TrustBudgetManager(agent_db)
 
 
 @pytest_asyncio.fixture
 async def permission_manager(permission_repo, trust_budget):
-    from agent_os.permissions.manager import PermissionManager
+    from muse.permissions.manager import PermissionManager
     return PermissionManager(permission_repo, trust_budget)
 
 
 @pytest_asyncio.fixture
 async def audit_repo(agent_db):
-    from agent_os.audit.repository import AuditRepository
+    from muse.audit.repository import AuditRepository
     return AuditRepository(agent_db)
 
 
 @pytest_asyncio.fixture
 async def wal(wal_db):
-    from agent_os.wal.log import WriteAheadLog
+    from muse.wal.log import WriteAheadLog
     return WriteAheadLog(wal_db)
 
 
 @pytest_asyncio.fixture
 async def session_repo(agent_db):
-    from agent_os.db.session_repository import SessionRepository
+    from muse.db.session_repository import SessionRepository
     return SessionRepository(agent_db)
 
 
 @pytest_asyncio.fixture
 async def task_manager(agent_db):
-    from agent_os.kernel.task_manager import TaskManager
+    from muse.kernel.task_manager import TaskManager
     return TaskManager(agent_db, max_concurrent=10)
 
 
 @pytest_asyncio.fixture
 async def model_router(mock_provider, agent_db):
-    from agent_os.providers.model_router import ModelRouter
+    from muse.providers.model_router import ModelRouter
     return ModelRouter(mock_provider, agent_db, "mock/test-model")
 
 
@@ -277,13 +277,13 @@ async def orchestrator(
     permission_manager, audit_repo, wal, model_router, temp_dir,
 ):
     """Fully wired Orchestrator with real DB, mock LLM, real embeddings."""
-    from agent_os.memory.promotion import PromotionManager
-    from agent_os.memory.demotion import DemotionManager
-    from agent_os.skills.loader import SkillLoader
-    from agent_os.skills.sandbox import SkillSandbox
-    from agent_os.gateway.proxy import APIGateway
-    from agent_os.credentials.vault import CredentialVault
-    from agent_os.kernel.orchestrator import Orchestrator
+    from muse.memory.promotion import PromotionManager
+    from muse.memory.demotion import DemotionManager
+    from muse.skills.loader import SkillLoader
+    from muse.skills.sandbox import SkillSandbox
+    from muse.gateway.proxy import APIGateway
+    from muse.credentials.vault import CredentialVault
+    from muse.kernel.orchestrator import Orchestrator
 
     promotion_manager = PromotionManager(
         memory_repo, memory_cache, embedding_service,

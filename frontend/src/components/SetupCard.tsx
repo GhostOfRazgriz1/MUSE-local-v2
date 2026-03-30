@@ -65,7 +65,7 @@ export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
         <div className="setup-card-icon">
           <IconBot size={32} />
         </div>
-        <h2 className="setup-card-title">Welcome to Agent OS</h2>
+        <h2 className="setup-card-title">Welcome to MUSE</h2>
         <p className="setup-card-desc">
           Add an API key to connect to an LLM provider. You can change this
           anytime in Settings.

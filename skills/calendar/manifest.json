@@ -2,7 +2,7 @@
     "name": "Calendar",
     "version": "0.1.0",
     "description": "View, create, and manage calendar events. Check your schedule, see upcoming meetings, create new events, find available times. Uses Google Calendar.",
-    "author": "Agent OS",
+    "author": "MUSE",
     "permissions": ["calendar:read", "calendar:write", "profile:read", "memory:read", "memory:write"],
     "memory_namespaces": ["calendar"],
     "allowed_domains": ["www.googleapis.com"],

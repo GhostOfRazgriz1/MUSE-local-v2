@@ -1,4 +1,4 @@
-"""Agent OS integration tests — exercises skills via WebSocket like a real user.
+"""MUSE integration tests — exercises skills via WebSocket like a real user.
 
 Run with: python tests/test_agent.py
 Requires the server to be running (preferably with --debug).
@@ -173,7 +173,7 @@ class AgentTester:
 async def main():
     t = AgentTester()
 
-    print("Connecting to Agent OS...")
+    print("Connecting to MUSE...")
     await t.connect()
     print(f"Session: {t.session_id}")
 

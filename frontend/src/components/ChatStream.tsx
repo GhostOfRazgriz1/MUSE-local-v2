@@ -544,7 +544,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
             <div className="chat-empty-text">
               {connected
                 ? "Type a message below, or try one of these:"
-                : "Establishing connection to Agent OS..."}
+                : "Establishing connection to MUSE..."}
             </div>
             {connected && (
               <div className="suggestion-chips">
@@ -1057,7 +1057,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
               requestAnimationFrame(adjustTextareaHeight);
             }}
             onKeyDown={handleKeyDown}
-            placeholder={connected ? "Message Agent OS..." : "Connecting..."}
+            placeholder={connected ? "Message MUSE..." : "Connecting..."}
             disabled={!connected}
           />
           <button

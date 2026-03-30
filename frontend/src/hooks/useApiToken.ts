@@ -5,7 +5,10 @@
  * used for all subsequent API calls and WebSocket connections.
  */
 
-const API_BASE = "http://localhost:8080/api";
+// Use relative URL so it works through Vite proxy (dev) and
+// direct static serving (production) without hardcoding a port.
+const _loc = typeof window !== "undefined" ? window.location : { protocol: "http:", host: "localhost:8080" };
+const API_BASE = `${_loc.protocol}//${_loc.host}/api`;
 
 let _token: string | null = null;
 let _fetchPromise: Promise<string | null> | null = null;
@@ -25,6 +28,9 @@ export async function getApiToken(): Promise<string | null> {
       return _token;
     } catch {
       return null;
+    } finally {
+      // Allow retry if the fetch failed (server may not have been ready)
+      if (!_token) _fetchPromise = null;
     }
   })();
 
@@ -48,5 +54,20 @@ export async function apiFetch(
   }
   // Use relative URLs so the Vite dev proxy handles routing
   const url = path.startsWith("/api/") ? path : `/api${path}`;
-  return fetch(url, { ...options, headers });
+  const resp = await fetch(url, { ...options, headers });
+
+  // If 401, the token may be stale (server restarted). Retry once with
+  // a fresh token.
+  if (resp.status === 401 && token) {
+    _token = null;
+    _fetchPromise = null;
+    const newToken = await getApiToken();
+    if (newToken && newToken !== token) {
+      const retryHeaders = new Headers(options.headers);
+      retryHeaders.set("Authorization", `Bearer ${newToken}`);
+      return fetch(url, { ...options, headers: retryHeaders });
+    }
+  }
+
+  return resp;
 }

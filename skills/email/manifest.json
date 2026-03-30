@@ -2,7 +2,7 @@
     "name": "Email",
     "version": "0.1.0",
     "description": "Read, search, and send emails. Check your inbox, read messages, compose and send new emails, reply to threads. Uses Gmail.",
-    "author": "Agent OS",
+    "author": "MUSE",
     "permissions": ["email:read", "email:send", "profile:read", "memory:read", "memory:write"],
     "memory_namespaces": ["email"],
     "allowed_domains": ["gmail.googleapis.com", "www.googleapis.com"],

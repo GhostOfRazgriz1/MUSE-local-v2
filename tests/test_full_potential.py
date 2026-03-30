@@ -1,4 +1,4 @@
-"""Agent OS full-potential tests — exercises multi-task orchestration,
+"""MUSE full-potential tests — exercises multi-task orchestration,
 pipeline context, intermediate suppression, and edge cases.
 
 Run with: python tests/test_full_potential.py
@@ -23,8 +23,8 @@ from pathlib import Path
 from websockets.asyncio.client import connect as ws_connect
 
 TIMEOUT = 180
-LOGS_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "agent-os" / "logs"
-TOKEN_PATH = Path(os.environ.get("LOCALAPPDATA", "")) / "agent-os" / ".api_token"
+LOGS_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "muse" / "logs"
+TOKEN_PATH = Path(os.environ.get("LOCALAPPDATA", "")) / "muse" / ".api_token"
 FILES_OUTPUT_DIR = Path.home() / "Documents" / "AgentOS"
 
 
@@ -472,7 +472,7 @@ async def main():
     # Track which test name produced each multi-task flow
     flow_test_names: list[str] = []
 
-    print("Connecting to Agent OS...")
+    print("Connecting to MUSE...")
     await t.connect()
     print(f"Session: {t.session_id}\n")
 

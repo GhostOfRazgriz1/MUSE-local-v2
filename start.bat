@@ -1,12 +1,12 @@
 @echo off
 setlocal enabledelayedexpansion
 
-title Agent OS - Startup
+title MUSE - Startup
 color 0A
 
 echo.
 echo  ============================================
-echo   Agent OS - One-Click Startup
+echo   MUSE - One-Click Startup
 echo  ============================================
 echo.
 
@@ -73,14 +73,7 @@ cd /d "%ROOT%"
 :: 4. Start services
 :: -----------------------------------------------
 echo.
-echo [4/4] Starting Agent OS...
-
-:: Load env vars from .env if it exists (for backward compat)
-if exist "%ROOT%.env" (
-    for /f "usebackq tokens=1,* delims==" %%A in ("%ROOT%.env") do (
-        set "%%A=%%B"
-    )
-)
+echo [4/4] Starting MUSE...
 
 echo.
 echo  ============================================
@@ -93,30 +86,29 @@ echo.
 :: Write backend launcher
 > "%ROOT%_run_backend.cmd" (
     echo @echo off
-    echo title Agent OS - Backend
+    echo title MUSE - Backend
     echo cd /d "%ROOT%"
-    if defined OPENROUTER_API_KEY echo set OPENROUTER_API_KEY=!OPENROUTER_API_KEY!
-    echo "%PYTHON%" -m uvicorn agent_os.api.app:create_app --factory --host 127.0.0.1 --port 8080 --reload --app-dir src
+    echo "%PYTHON%" -m uvicorn muse.api.app:create_app --factory --host 127.0.0.1 --port 8080 --reload --app-dir src
     echo pause
 )
 
 :: Write frontend launcher
 > "%ROOT%_run_frontend.cmd" (
     echo @echo off
-    echo title Agent OS - Frontend
+    echo title MUSE - Frontend
     echo cd /d "%ROOT%frontend"
     echo npx vite --host 127.0.0.1 --port 3000
     echo pause
 )
 
 :: Start backend
-start "Agent OS - Backend" cmd /c "%ROOT%_run_backend.cmd"
+start "MUSE - Backend" cmd /c "%ROOT%_run_backend.cmd"
 
 :: Give backend a moment
 timeout /t 4 /nobreak >nul
 
 :: Start frontend
-start "Agent OS - Frontend" cmd /c "%ROOT%_run_frontend.cmd"
+start "MUSE - Frontend" cmd /c "%ROOT%_run_frontend.cmd"
 
 :: Wait then open browser
 timeout /t 4 /nobreak >nul
@@ -124,7 +116,7 @@ echo   Opening browser...
 start http://127.0.0.1:3000
 
 echo.
-echo   Agent OS is running!
+echo   MUSE is running!
 echo   Configure your API keys in Settings if this is your first time.
 echo   Close this window or press any key to exit - services keep running.
 echo.

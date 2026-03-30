@@ -414,7 +414,7 @@ async def _resolve_key(ctx, provider_id: str, credential_id: str) -> str | None:
 
 async def _read_credential(ctx, credential_id: str) -> str | None:
     """Read a credential from the vault via the IPC bridge."""
-    from agent_os_sdk.ipc_client import CredentialReadMsg
+    from muse_sdk.ipc_client import CredentialReadMsg
 
     request_id = str(uuid.uuid4())
     try:

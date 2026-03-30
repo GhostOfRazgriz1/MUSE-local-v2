@@ -2,7 +2,7 @@
     "name": "Skill Author",
     "version": "0.1.0",
     "description": "Create a new custom skill from a description. Use when the user asks to build, generate, create, or write a new skill, plugin, tool, or capability for the agent.",
-    "author": "Agent OS",
+    "author": "MUSE",
     "permissions": ["memory:read", "memory:write", "file:write"],
     "memory_namespaces": ["skill_author"],
     "allowed_domains": [],

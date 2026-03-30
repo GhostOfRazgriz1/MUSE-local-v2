@@ -2,7 +2,7 @@
     "name": "Notes",
     "version": "0.2.0",
     "description": "Manage short personal notes stored in memory. Jot down ideas, remember facts, keep a scratchpad. Not for files on disk — use Files for that.",
-    "author": "Agent OS",
+    "author": "MUSE",
     "permissions": ["memory:read", "memory:write"],
     "memory_namespaces": ["notes"],
     "allowed_domains": [],

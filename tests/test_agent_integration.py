@@ -1,4 +1,4 @@
-"""Comprehensive integration tests for Agent OS.
+"""Comprehensive integration tests for MUSE.
 
 Simulates a user interacting with the full agent stack:
 - Memory system (write, read, search, promotion, demotion)
@@ -164,7 +164,7 @@ class TestMemoryCache:
 
     async def test_eviction(self):
         """Cache evicts entries when budget is exceeded."""
-        from agent_os.memory.cache import MemoryCache
+        from muse.memory.cache import MemoryCache
         # Tiny budget to force eviction
         tiny_cache = MemoryCache(budget_mb=0)  # effectively 0 bytes
         for i in range(50):
@@ -216,7 +216,7 @@ class TestDemotionManager:
     """Tests for fact extraction and cache-to-disk flushing."""
 
     async def test_extract_facts_from_text(self, memory_repo, memory_cache, embedding_service):
-        from agent_os.memory.demotion import DemotionManager
+        from muse.memory.demotion import DemotionManager
         dm = DemotionManager(memory_repo, memory_cache, embedding_service)
 
         text = "User prefers dark mode. The project uses React and TypeScript."
@@ -228,7 +228,7 @@ class TestDemotionManager:
     async def test_demote_to_cache_novelty_check(
         self, memory_repo, memory_cache, embedding_service,
     ):
-        from agent_os.memory.demotion import DemotionManager
+        from muse.memory.demotion import DemotionManager
         dm = DemotionManager(memory_repo, memory_cache, embedding_service)
 
         facts = [
@@ -242,7 +242,7 @@ class TestDemotionManager:
         assert len(inserted2) == 0
 
     async def test_flush_to_disk(self, memory_repo, memory_cache, embedding_service):
-        from agent_os.memory.demotion import DemotionManager
+        from muse.memory.demotion import DemotionManager
         dm = DemotionManager(memory_repo, memory_cache, embedding_service)
 
         # Insert a dirty entry into cache
@@ -268,7 +268,7 @@ class TestIntentClassifier:
 
     @pytest_asyncio.fixture
     async def classifier(self, embedding_service, mock_provider):
-        from agent_os.kernel.intent_classifier import SemanticIntentClassifier
+        from muse.kernel.intent_classifier import SemanticIntentClassifier
         clf = SemanticIntentClassifier(embedding_service)
         clf.set_provider(mock_provider, "mock/test-model")
 
@@ -293,21 +293,21 @@ class TestIntentClassifier:
 
     async def test_greeting_goes_inline(self, classifier):
         """Greetings should always be handled inline."""
-        from agent_os.kernel.intent_classifier import ExecutionMode
+        from muse.kernel.intent_classifier import ExecutionMode
         for greeting in ["hello", "hi there", "hey", "good morning", "thanks!"]:
             intent = await classifier.classify(greeting)
             assert intent.mode == ExecutionMode.INLINE, f"'{greeting}' should be inline"
 
     async def test_note_request_delegated(self, classifier):
         """Explicit note requests should delegate to the notes skill."""
-        from agent_os.kernel.intent_classifier import ExecutionMode
+        from muse.kernel.intent_classifier import ExecutionMode
         intent = await classifier.classify("save a note about the meeting today")
         assert intent.mode == ExecutionMode.DELEGATED
         assert intent.skill_id == "notes"
 
     async def test_file_request_delegated(self, classifier, mock_provider):
         """File operations should delegate to the files skill."""
-        from agent_os.kernel.intent_classifier import ExecutionMode
+        from muse.kernel.intent_classifier import ExecutionMode
         # The LLM is asked to disambiguate when score is in the ambiguous zone
         mock_provider.add_response("which single skill", "Files")
         intent = await classifier.classify("read the file at /home/user/report.txt")
@@ -316,14 +316,14 @@ class TestIntentClassifier:
 
     async def test_reminder_request_delegated(self, classifier):
         """Reminder requests should delegate to reminders skill."""
-        from agent_os.kernel.intent_classifier import ExecutionMode
+        from muse.kernel.intent_classifier import ExecutionMode
         intent = await classifier.classify("remind me to call the doctor at 3pm tomorrow")
         assert intent.mode == ExecutionMode.DELEGATED
         assert intent.skill_id == "reminders"
 
     async def test_search_request_delegated(self, classifier, mock_provider):
         """Web search requests should delegate to search skill."""
-        from agent_os.kernel.intent_classifier import ExecutionMode
+        from muse.kernel.intent_classifier import ExecutionMode
         mock_provider.add_response("which single skill", "Search")
         intent = await classifier.classify("search the web for the latest news about AI")
         assert intent.mode == ExecutionMode.DELEGATED
@@ -331,7 +331,7 @@ class TestIntentClassifier:
 
     async def test_ambiguous_message_classified(self, classifier):
         """Ambiguous messages should still get a classification."""
-        from agent_os.kernel.intent_classifier import ExecutionMode
+        from muse.kernel.intent_classifier import ExecutionMode
         intent = await classifier.classify("I need help organizing my thoughts")
         # Should classify (either inline or delegated) without error
         assert intent.mode in (ExecutionMode.INLINE, ExecutionMode.DELEGATED)
@@ -349,7 +349,7 @@ class TestIntentClassifier:
 
     async def test_keyword_boost_for_files(self, classifier, mock_provider):
         """File-related keywords should boost the files skill score."""
-        from agent_os.kernel.intent_classifier import ExecutionMode
+        from muse.kernel.intent_classifier import ExecutionMode
         # "write a story" + file path triggers keyword boost for files
         mock_provider.add_response("which single skill", "Files")
         intent = await classifier.classify("write a story to ~/documents/story.txt")
@@ -606,7 +606,7 @@ class TestTaskManager:
         assert completed.result == {"summary": "Note saved"}
 
     async def test_concurrency_limit(self, agent_db):
-        from agent_os.kernel.task_manager import TaskManager
+        from muse.kernel.task_manager import TaskManager
         tm = TaskManager(agent_db, max_concurrent=2)
         await tm.spawn(skill_id="a", brief={})
         await tm.spawn(skill_id="b", brief={})
@@ -659,8 +659,8 @@ class TestContextAssembly:
     async def test_assemble_basic(
         self, embedding_service, memory_repo, memory_cache, config,
     ):
-        from agent_os.memory.promotion import PromotionManager
-        from agent_os.kernel.context_assembly import ContextAssembler
+        from muse.memory.promotion import PromotionManager
+        from muse.kernel.context_assembly import ContextAssembler
 
         pm = PromotionManager(
             memory_repo, memory_cache, embedding_service,
@@ -680,8 +680,8 @@ class TestContextAssembly:
     async def test_to_messages_format(
         self, embedding_service, memory_repo, memory_cache, config,
     ):
-        from agent_os.memory.promotion import PromotionManager
-        from agent_os.kernel.context_assembly import ContextAssembler
+        from muse.memory.promotion import PromotionManager
+        from muse.kernel.context_assembly import ContextAssembler
 
         pm = PromotionManager(
             memory_repo, memory_cache, embedding_service,
@@ -703,8 +703,8 @@ class TestContextAssembly:
     async def test_conversation_history_included(
         self, embedding_service, memory_repo, memory_cache, config,
     ):
-        from agent_os.memory.promotion import PromotionManager
-        from agent_os.kernel.context_assembly import ContextAssembler
+        from muse.memory.promotion import PromotionManager
+        from muse.kernel.context_assembly import ContextAssembler
 
         pm = PromotionManager(
             memory_repo, memory_cache, embedding_service,
@@ -732,8 +732,8 @@ class TestContextAssembly:
     async def test_skills_catalog_injected(
         self, embedding_service, memory_repo, memory_cache, config,
     ):
-        from agent_os.memory.promotion import PromotionManager
-        from agent_os.kernel.context_assembly import ContextAssembler
+        from muse.memory.promotion import PromotionManager
+        from muse.kernel.context_assembly import ContextAssembler
 
         pm = PromotionManager(
             memory_repo, memory_cache, embedding_service,
@@ -752,8 +752,8 @@ class TestContextAssembly:
         self, embedding_service, memory_repo, memory_cache, config,
     ):
         """Profile entries from _profile namespace appear in assembled context."""
-        from agent_os.memory.promotion import PromotionManager
-        from agent_os.kernel.context_assembly import ContextAssembler
+        from muse.memory.promotion import PromotionManager
+        from muse.kernel.context_assembly import ContextAssembler
 
         # Write profile data
         await memory_repo.put("_profile", "user:name", "Edward")
@@ -1016,7 +1016,7 @@ class TestOrchestratorPipeline:
         config.identity_path.write_text(identity_content, encoding="utf-8")
 
         # Reload identity
-        from agent_os.kernel.context_assembly import load_identity
+        from muse.kernel.context_assembly import load_identity
         orchestrator._identity = load_identity(config)
 
         events = await collect_events(orchestrator.get_greeting())
@@ -1122,7 +1122,7 @@ class TestSkillLoader:
     """Tests for skill installation and manifest validation."""
 
     async def test_load_builtin_skills(self, agent_db, config):
-        from agent_os.skills.loader import SkillLoader
+        from muse.skills.loader import SkillLoader
         loader = SkillLoader(agent_db, config.skills_dir)
 
         builtin = Path(__file__).resolve().parent.parent / "skills"
@@ -1132,7 +1132,7 @@ class TestSkillLoader:
             assert len(installed) >= 1
 
     async def test_get_manifest(self, agent_db, config):
-        from agent_os.skills.loader import SkillLoader
+        from muse.skills.loader import SkillLoader
         loader = SkillLoader(agent_db, config.skills_dir)
         builtin = Path(__file__).resolve().parent.parent / "skills"
         if builtin.exists():
@@ -1143,7 +1143,7 @@ class TestSkillLoader:
                 assert "memory:read" in manifest.permissions
 
     async def test_uninstall_skill(self, agent_db, config):
-        from agent_os.skills.loader import SkillLoader
+        from muse.skills.loader import SkillLoader
         loader = SkillLoader(agent_db, config.skills_dir)
         builtin = Path(__file__).resolve().parent.parent / "skills"
         if builtin.exists():
@@ -1166,7 +1166,7 @@ class TestPromotionManager:
     async def test_prewarm_loads_profile(
         self, memory_repo, memory_cache, embedding_service, config,
     ):
-        from agent_os.memory.promotion import PromotionManager
+        from muse.memory.promotion import PromotionManager
         pm = PromotionManager(
             memory_repo, memory_cache, embedding_service,
             config.memory, config.registers,
@@ -1186,7 +1186,7 @@ class TestPromotionManager:
     async def test_query_driven_promotion(
         self, memory_repo, memory_cache, embedding_service, config,
     ):
-        from agent_os.memory.promotion import PromotionManager
+        from muse.memory.promotion import PromotionManager
         pm = PromotionManager(
             memory_repo, memory_cache, embedding_service,
             config.memory, config.registers,
@@ -1202,7 +1202,7 @@ class TestPromotionManager:
     async def test_cache_to_registers(
         self, memory_repo, memory_cache, embedding_service, config,
     ):
-        from agent_os.memory.promotion import PromotionManager
+        from muse.memory.promotion import PromotionManager
         pm = PromotionManager(
             memory_repo, memory_cache, embedding_service,
             config.memory, config.registers,

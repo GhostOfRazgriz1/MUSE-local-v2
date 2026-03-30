@@ -2,7 +2,7 @@
     "name": "Code Runner",
     "version": "0.1.0",
     "description": "Execute Python code safely in a sandbox. Calculate math, process data, run algorithms, convert units, generate outputs. Use for any computation the agent needs to perform rather than estimate or guess.",
-    "author": "Agent OS",
+    "author": "MUSE",
     "permissions": ["memory:read", "memory:write"],
     "memory_namespaces": ["code_runner"],
     "max_tokens": 4000,

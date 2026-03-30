@@ -1,5 +1,5 @@
 /* ============================================================
-   Agent OS — Design System
+   MUSE — Design System
    Style: Modern Dark Cinema
    Font: Inter / JetBrains Mono
    ============================================================ */
@@ -3535,6 +3535,45 @@ textarea:focus-visible {
 
 .skill-card-expand:hover {
   color: var(--text-secondary);
+}
+
+.skill-uninstall-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: all var(--transition-fast);
+}
+.skill-card:hover .skill-uninstall-btn,
+.skill-list-row:hover .skill-uninstall-btn { opacity: 1; }
+.skill-uninstall-btn:hover {
+  background: var(--error-subtle);
+  color: var(--error);
+}
+
+.skill-card-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-top: 8px;
+  background: var(--error-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  color: var(--text-primary);
+}
+.skill-card-confirm-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .skill-card-details {

@@ -2,7 +2,7 @@
     "name": "Reminders",
     "version": "0.1.0",
     "description": "Set, list, and manage reminders and alerts. Schedule notifications, don't forget tasks, remember to do things at a specific time. Get notified when it's time.",
-    "author": "Agent OS",
+    "author": "MUSE",
     "permissions": ["memory:read", "memory:write"],
     "memory_namespaces": ["reminders"],
     "allowed_domains": [],

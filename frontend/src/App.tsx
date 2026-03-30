@@ -40,16 +40,19 @@ function App() {
     if (last.type === "reminder") {
       notifications.notify("Reminder", (last as any).what || (last as any).content);
     } else if (last.type === "suggestion") {
-      notifications.notify("Agent OS", (last as any).content);
+      notifications.notify("MUSE", (last as any).content);
     } else if (last.type === "autonomous_action") {
-      notifications.notify(`Agent OS ran ${(last as any).skill_id}`, (last as any).reason);
+      notifications.notify(`MUSE ran ${(last as any).skill_id}`, (last as any).reason);
     } else if (last.type === "skill_notify") {
-      notifications.notify("Agent OS", (last as any).message);
+      notifications.notify("MUSE", (last as any).message);
     }
   }, [events.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (historyMessages.length > 0) setMessages(historyMessages);
+    if (historyMessages.length > 0) {
+      // Defer to avoid setState-during-render when effects cascade
+      queueMicrotask(() => setMessages(historyMessages));
+    }
   }, [historyMessages]);
 
   useEffect(() => { setMessages([]); }, [requestedSessionId]);
@@ -236,7 +239,7 @@ function App() {
             <div className="topbar-logo-icon">
               <IconBot size={16} />
             </div>
-            <span className="topbar-title">Agent OS</span>
+            <span className="topbar-title">MUSE</span>
           </div>
           {sessionTitle && view === "chat" && (
             <>

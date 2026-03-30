@@ -2,7 +2,7 @@
     "name": "Notify",
     "version": "0.1.0",
     "description": "Send notifications to the user. Desktop alerts, reminders, status updates. Use when the user needs to be alerted about something even if they're not looking at the chat.",
-    "author": "Agent OS",
+    "author": "MUSE",
     "permissions": ["memory:read"],
     "memory_namespaces": ["notify"],
     "allowed_domains": [],

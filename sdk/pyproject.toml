@@ -3,11 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agent-os-sdk"
+name = "muse-sdk"
 version = "0.1.0"
-description = "Agent OS Skill SDK — build skills for Agent OS"
+description = "MUSE Skill SDK — build skills for MUSE"
 requires-python = ">=3.12"
 dependencies = []
 
 [tool.hatch.build.targets.wheel]
-packages = ["agent_os_sdk"]
+packages = ["muse_sdk"]

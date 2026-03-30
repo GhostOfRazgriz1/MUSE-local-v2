@@ -274,7 +274,7 @@ async def _delete_event(ctx, instruction: str, token: str) -> dict:
 
 async def _get_access_token(ctx) -> str | None:
     """Read the Google OAuth token from the credential vault."""
-    from agent_os_sdk.ipc_client import CredentialReadMsg
+    from muse_sdk.ipc_client import CredentialReadMsg
 
     request_id = str(uuid.uuid4())
     await ctx._ipc.send(CredentialReadMsg(
@@ -321,7 +321,7 @@ def _needs_setup() -> dict:
         "1. Go to **Settings > Credentials**\n"
         "2. Add your Google OAuth client ID and secret\n"
         "3. Start the OAuth flow from Settings\n\n"
-        "This connects Agent OS to your Google Calendar securely."
+        "This connects MUSE to your Google Calendar securely."
     )
 
 

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agent-os"
+name = "muse"
 version = "0.1.0"
 description = "A secure, consumer-grade autonomous agent platform"
 requires-python = ">=3.12"
@@ -32,10 +32,10 @@ dev = [
 ]
 
 [project.scripts]
-agent-os = "agent_os.main:main"
+muse = "muse.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agent_os"]
+packages = ["src/muse"]
 
 [tool.ruff]
 target-version = "py312"

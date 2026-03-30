@@ -1,9 +1,9 @@
-# Agent OS — Development Guide
+# MUSE — Development Guide
 
 ## Project Structure
 ```
-agent_os/
-├── src/agent_os/           # Backend (Python, FastAPI)
+muse/
+├── src/muse/           # Backend (Python, FastAPI)
 │   ├── api/routes/         # WebSocket + REST endpoints
 │   ├── kernel/             # Orchestrator, classifier, scheduler, dreaming
 │   ├── skills/             # Skill loader, sandbox, authoring system
@@ -12,7 +12,7 @@ agent_os/
 │   ├── credentials/        # Vault (keyring), OAuth
 │   ├── db/                 # SQLite schema
 │   └── debug.py            # Debug tracer (JSONL logging)
-├── sdk/agent_os_sdk/       # Python SDK for skills (context, files, http, llm, memory, user)
+├── sdk/muse_sdk/       # Python SDK for skills (context, files, http, llm, memory, user)
 ├── skills/                 # First-party skill source (copied to data_dir on startup)
 ├── frontend/src/           # React + TypeScript UI (Vite)
 └── tests/                  # Integration test (runs against live server)
@@ -29,10 +29,10 @@ agent_os/
 - **Scheduler** — background tasks on intervals, persisted in DB, results in `_scheduled` namespace
 
 ## Running
-- **Start**: `start.bat` (Windows) or `python -m agent_os.main`
+- **Start**: `start.bat` (Windows) or `python -m muse.main`
 - **Debug mode**: Set `debug: bool = True` in Config or pass `--debug`
 - **Tests**: `python tests/test_agent.py` (run from outside project tree to avoid uvicorn reload)
-- **Logs**: `%LOCALAPPDATA%/agent-os/logs/` (when debug=True)
+- **Logs**: `%LOCALAPPDATA%/muse/logs/` (when debug=True)
 
 ## Skill SDK Contract
 - Entry point: `async def run(ctx) -> dict`
@@ -40,10 +40,10 @@ agent_os/
 - `response.text()` and `response.json()` are **methods** (call with parentheses)
 - HTTP permission is `web:fetch` (NOT `http:request`)
 - Skills using `ctx.http` must declare `allowed_domains` in manifest
-- See `src/agent_os/skills/authoring/sdk_contract.py` for full reference
+- See `src/muse/skills/authoring/sdk_contract.py` for full reference
 
 ## Common Pitfalls
-- Skills are installed from source `skills/` to `%LOCALAPPDATA%/agent-os/skills/` on startup
+- Skills are installed from source `skills/` to `%LOCALAPPDATA%/muse/skills/` on startup
 - Stale first-party skills are auto-cleaned if source directory is removed
 - `json_mode=True` is unreliable via OpenRouter — use system prompt + fence stripping instead
 - The WebSocket handler uses a concurrent reader (ws_reader) to avoid deadlocks during skill user interactions
