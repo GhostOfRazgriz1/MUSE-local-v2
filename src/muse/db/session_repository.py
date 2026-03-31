@@ -241,6 +241,72 @@ class SessionRepository:
         ]
 
     # ------------------------------------------------------------------
+    # Conversation compaction checkpoints
+    # ------------------------------------------------------------------
+
+    async def save_conversation_checkpoint(
+        self, session_id: str, summary: str, turn_count: int,
+    ) -> int:
+        """Write a compaction checkpoint to conversation_archive.
+
+        The ``facts_extracted`` column is repurposed as a turn counter
+        (it was previously unused).
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = await self._db.execute(
+            "INSERT INTO conversation_archive "
+            "(session_id, summary, facts_extracted, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (session_id, summary, turn_count, now),
+        )
+        await self._db.commit()
+        return cursor.lastrowid  # type: ignore[return-value]
+
+    async def get_latest_checkpoint(self, session_id: str) -> dict | None:
+        """Return the most recent compaction checkpoint for a session."""
+        cursor = await self._db.execute(
+            "SELECT id, summary, facts_extracted, created_at "
+            "FROM conversation_archive "
+            "WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+            (session_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0], "summary": row[1],
+            "turn_count": row[2], "created_at": row[3],
+        }
+
+    async def get_checkpoint_near_message(
+        self, session_id: str, message_id: int,
+    ) -> dict | None:
+        """Find the checkpoint closest to (but before) a message.
+
+        Used when forking: the forked session inherits the compacted
+        summary that was valid at the fork point.
+        """
+        cursor = await self._db.execute(
+            """
+            SELECT ca.id, ca.summary, ca.facts_extracted, ca.created_at
+            FROM conversation_archive ca
+            WHERE ca.session_id = ?
+              AND ca.created_at <= (
+                  SELECT m.created_at FROM messages m WHERE m.id = ?
+              )
+            ORDER BY ca.created_at DESC LIMIT 1
+            """,
+            (session_id, message_id),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0], "summary": row[1],
+            "turn_count": row[2], "created_at": row[3],
+        }
+
+    # ------------------------------------------------------------------
     # Auto-title generation helper
     # ------------------------------------------------------------------
 

@@ -27,7 +27,9 @@ async def main():
     config = json.loads(config_line)
     task_id = config["task_id"]
     skill_id = config["skill_id"]
-    skill_path = config["skill_path"]
+    skill_dir = config["skill_dir"]
+    entry_point = config.get("entry_point", "skill.py")
+    skill_path = str(Path(skill_dir) / entry_point)
     ipc_dir = config.get("ipc_dir", "")
     brief = config["brief"]
     permissions = config["permissions"]

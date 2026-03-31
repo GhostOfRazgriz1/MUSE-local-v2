@@ -296,19 +296,18 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
           setIsThinking(false);
           const last = updated[updated.length - 1];
           if (last && "type" in last && last.type === "response_chunk") {
-            // Append to existing streaming message
+            const accumulated = (last.content || "") + evt.delta;
             updated[updated.length - 1] = {
               ...last,
-              delta: (last as any).content + evt.delta,
-              content: ((last as any).content || "") + evt.delta,
-            } as any;
+              delta: accumulated,
+              content: accumulated,
+            };
           } else {
-            // Start a new streaming message
             updated.push({
-              type: "response_chunk",
+              type: "response_chunk" as const,
               delta: evt.delta,
               content: evt.delta,
-            } as any);
+            });
           }
           continue;
         }
@@ -316,7 +315,8 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
         // When the final response arrives, replace the streaming placeholder
         if (evt.type === "response") {
           const lastIdx = updated.length - 1;
-          if (lastIdx >= 0 && (updated[lastIdx] as any)?.type === "response_chunk") {
+          const lastMsg = updated[lastIdx];
+          if (lastIdx >= 0 && lastMsg && "type" in lastMsg && lastMsg.type === "response_chunk") {
             updated[lastIdx] = evt;
             continue;
           }
@@ -345,7 +345,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
 
         // Plan/multi-task started — enable steering
         if (evt.type === "multi_task_started" ||
-            (evt.type === "status" && (evt as any).content?.includes("Step "))) {
+            (evt.type === "status" && evt.content?.includes("Step "))) {
           setPlanActive(true);
         }
 
@@ -567,12 +567,12 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
           <div className="chat-messages-inner">
             {messages.map((msg, i) => {
               // Insert date separators when the day changes between messages
-              const createdAt = "_createdAt" in msg ? (msg as any)._createdAt : undefined;
+              const createdAt = "_createdAt" in msg ? msg._createdAt : undefined;
               const msgDate = createdAt ? new Date(createdAt) : (i === 0 ? new Date() : undefined);
               let dateSep: React.ReactNode = null;
               if (msgDate) {
                 const prevMsg = i > 0 ? messages[i - 1] : undefined;
-                const prevCreatedAt = prevMsg && "_createdAt" in prevMsg ? (prevMsg as any)._createdAt : undefined;
+                const prevCreatedAt = prevMsg && "_createdAt" in prevMsg ? prevMsg._createdAt : undefined;
                 const prevDate = prevCreatedAt ? new Date(prevCreatedAt) : undefined;
                 const showSep = i === 0 || (prevDate && msgDate.toDateString() !== prevDate.toDateString());
                 if (showSep) {
@@ -613,7 +613,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                         <IconBot size={16} />
                       </div>
                       <div className="msg-bubble agent">
-                        <MarkdownContent content={(evt as any).content || evt.delta} />
+                        <MarkdownContent content={evt.content || evt.delta} />
                       </div>
                     </div>
                   );
@@ -645,10 +645,10 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                               <IconRefresh size={13} />
                             </button>
                           )}
-                          {(evt as any)._dbId != null && (
+                          {msg._dbId != null && (
                             <button
                               className="msg-fork-btn"
-                              onClick={() => onFork((evt as any)._dbId)}
+                              onClick={() => onFork(msg._dbId!)}
                               title="Fork from this message"
                               aria-label="Fork conversation from this message"
                             >
@@ -662,6 +662,10 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                 }
 
                 case "task_started":
+                  // Suppress individual start notifications when part of a
+                  // multi-task — the multi_task_started bubble already shows
+                  // the count, avoiding the "2X tasks" impression.
+                  if ("sub_task_index" in evt) return null;
                   return wrapMsg(
                     <div className="task-notification started">
                       <strong>{evt.skill_name}</strong>&nbsp;started — {evt.message}
@@ -853,7 +857,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                 case "status":
                   return wrapMsg(
                     <div className="task-notification started">
-                      {(evt as any).content}
+                      {evt.content}
                     </div>
                   );
 
@@ -861,7 +865,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   return wrapMsg(
                     <div className="task-notification started steering">
                       <IconNavigation size={13} />
-                      &nbsp;Steering applied: {(evt as any).content}
+                      &nbsp;Steering applied: {evt.content}
                     </div>
                   );
 
@@ -877,7 +881,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   return wrapMsg(
                     <div className="task-notification failed">
                       <IconShield size={13} />
-                      &nbsp;Blocked: {(evt as any).reason}
+                      &nbsp;Blocked: {evt.reason}
                     </div>
                   );
 
@@ -885,7 +889,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   return wrapMsg(
                     <div className="task-notification" style={{ opacity: 0.5 }}>
                       <IconNavigation size={13} />
-                      &nbsp;{(evt as any).content}
+                      &nbsp;{evt.content}
                     </div>
                   );
 
@@ -894,21 +898,21 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                     <div className="reminder-bubble" role="alert">
                       <IconClock size={15} />
                       <div>
-                        <strong>{(evt as any).what}</strong>
-                        {(evt as any).when && (
-                          <span className="reminder-time"> — {new Date((evt as any).when).toLocaleTimeString()}</span>
+                        <strong>{evt.what}</strong>
+                        {evt.when && (
+                          <span className="reminder-time"> — {new Date(evt.when).toLocaleTimeString()}</span>
                         )}
                       </div>
                     </div>
                   );
 
                 case "suggestion": {
-                  const sugId = (evt as any).suggestion_id;
+                  const sugId = evt.suggestion_id;
                   if (dismissedSuggestions.has(sugId)) return null;
                   return wrapMsg(
                     <div className="suggestion-card">
                       <div className="suggestion-card-text">
-                        {(evt as any).content}
+                        {evt.content}
                       </div>
                       <div className="suggestion-card-actions">
                         <button
@@ -916,7 +920,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                           onClick={() => {
                             onSuggestionFeedback(sugId, true);
                             setDismissedSuggestions((s) => new Set(s).add(sugId));
-                            onSend((evt as any).content);
+                            onSend(evt.content);
                           }}
                         >
                           Do it
@@ -940,10 +944,10 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                     <div key={i} className="autonomous-card">
                       <div className="autonomous-card-header">
                         <IconBot size={14} />
-                        Background action: <strong>{(evt as any).skill_id}</strong>
+                        Background action: <strong>{evt.skill_id}</strong>
                       </div>
-                      <div className="autonomous-card-reason">{(evt as any).reason}</div>
-                      <div className="autonomous-card-result">{(evt as any).result?.slice(0, 300)}</div>
+                      <div className="autonomous-card-reason">{evt.reason}</div>
+                      <div className="autonomous-card-result">{evt.result?.slice(0, 300)}</div>
                     </div>
                   );
 

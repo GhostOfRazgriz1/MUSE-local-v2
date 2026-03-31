@@ -8,7 +8,7 @@ import httpx
 
 from typing import AsyncIterator
 
-from .base import CompletionResult, ModelInfo, ProviderError, StreamChunk
+from .base import CompletionResult, ModelInfo, ProviderError, StreamChunk, LLM_TIMEOUT_TOTAL, LLM_TIMEOUT_CONNECT
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class OpenRouterProvider:
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             headers=headers,
-            timeout=httpx.Timeout(120.0, connect=10.0),
+            timeout=httpx.Timeout(LLM_TIMEOUT_TOTAL, connect=LLM_TIMEOUT_CONNECT),
         )
         self._model_cache: dict[str, ModelInfo] | None = None
 

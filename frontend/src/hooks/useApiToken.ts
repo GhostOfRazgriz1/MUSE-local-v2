@@ -54,7 +54,15 @@ export async function apiFetch(
   }
   // Use relative URLs so the Vite dev proxy handles routing
   const url = path.startsWith("/api/") ? path : `/api${path}`;
-  const resp = await fetch(url, { ...options, headers });
+
+  let resp: Response;
+  try {
+    resp = await fetch(url, { ...options, headers });
+  } catch (err) {
+    // Network error (server down, CORS, etc.) — log and re-throw
+    console.warn(`[MUSE] API request failed: ${options.method ?? "GET"} ${url}`, err);
+    throw err;
+  }
 
   // If 401, the token may be stale (server restarted). Retry once with
   // a fresh token.
@@ -67,6 +75,11 @@ export async function apiFetch(
       retryHeaders.set("Authorization", `Bearer ${newToken}`);
       return fetch(url, { ...options, headers: retryHeaders });
     }
+  }
+
+  // Log non-OK responses (4xx, 5xx) as warnings
+  if (!resp.ok && resp.status !== 401) {
+    console.warn(`[MUSE] API ${resp.status}: ${options.method ?? "GET"} ${url}`);
   }
 
   return resp;

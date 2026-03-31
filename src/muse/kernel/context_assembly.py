@@ -149,6 +149,7 @@ class ContextAssembler:
         model_context_window: int,
         namespace: str | None = None,
         conversation_history: list[dict] | None = None,
+        running_summary: str = "",
     ) -> AssembledContext:
         """Assemble a complete context for an LLM call."""
         ctx = AssembledContext()
@@ -207,22 +208,39 @@ class ContextAssembler:
             context_tokens_used += entry_tokens
         ctx.context_tokens = context_tokens_used
 
-        # Include recent conversation history if space allows
-        if conversation_history:
-            history_budget = max_fill - ctx.total_tokens
-            if history_budget > 200:
-                collected: list[dict] = []
+        # Include conversation history if space allows.
+        # When a running_summary is available (from compaction), inject it
+        # as a synthetic first turn so the LLM sees compact older context
+        # followed by verbatim recent turns.
+        history_budget = max_fill - ctx.total_tokens
+        if history_budget > 200:
+            collected: list[dict] = []
+
+            # Inject compacted summary as a leading context turn
+            if running_summary:
+                summary_tokens = estimate_tokens(running_summary)
+                if summary_tokens < history_budget:
+                    collected.append({
+                        "role": "system",
+                        "content": f"[Conversation so far]: {running_summary}",
+                    })
+                    history_budget -= summary_tokens
+
+            # Walk recent turns backwards, filling remaining budget
+            if conversation_history:
+                recent_collected: list[dict] = []
                 for turn in reversed(conversation_history[-10:]):
                     content = turn.get("content", "")
                     turn_tokens = estimate_tokens(content)
                     if turn_tokens > history_budget:
                         break
-                    collected.append({"role": turn["role"], "content": content})
+                    recent_collected.append({"role": turn["role"], "content": content})
                     history_budget -= turn_tokens
-                # Reverse back to chronological order
-                ctx.conversation_turns = list(reversed(collected))
-                ctx.conversation_tokens = sum(
-                    estimate_tokens(t["content"]) for t in ctx.conversation_turns
-                )
+                collected.extend(reversed(recent_collected))
+
+            ctx.conversation_turns = collected
+            ctx.conversation_tokens = sum(
+                estimate_tokens(t["content"]) for t in ctx.conversation_turns
+            )
 
         return ctx

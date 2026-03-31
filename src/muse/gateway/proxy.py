@@ -37,6 +37,8 @@ class APIGateway:
         self._host: str = getattr(config, "host", "127.0.0.1")
         self._port: int = getattr(config, "port", 8780)
         global_rpm: int = getattr(config, "global_rate_limit_rpm", 600)
+        self._http_timeout_total: int = getattr(config, "http_timeout_total", 30)
+        self._http_timeout_connect: int = getattr(config, "http_timeout_connect", 10)
 
         self._rate_limiter = RateLimiter(global_limit_rpm=global_rpm)
         self._domain_allowlists: dict[str, set[str]] = {}
@@ -51,7 +53,7 @@ class APIGateway:
     async def start(self) -> None:
         """Start the aiohttp proxy server."""
         self._session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30, connect=10),
+            timeout=aiohttp.ClientTimeout(total=self._http_timeout_total, connect=self._http_timeout_connect),
         )
         self._app = web.Application()
         self._app.router.add_route("*", "/{path_info:.*}", self.handle_request)
@@ -103,11 +105,11 @@ class APIGateway:
         start_time = time.monotonic()
 
         # 1. Extract identity headers
-        skill_id: str = request.headers.get("X-Agent-OS-Skill", "")
-        task_id: str = request.headers.get("X-Agent-OS-Task", "")
+        skill_id: str = request.headers.get("X-Muse-Skill", "")
+        task_id: str = request.headers.get("X-Muse-Task", "")
 
         if not skill_id:
-            return web.Response(status=400, text="Missing X-Agent-OS-Skill header")
+            return web.Response(status=400, text="Missing X-Muse-Skill header")
 
         # Determine the real destination URL.  The skill sends the full URL
         # as the path component of its proxy request, e.g.
@@ -174,7 +176,7 @@ class APIGateway:
         # 4. Credential injection --------------------------------------
         headers = dict(request.headers)
         # Remove hop-by-hop / internal headers before forwarding
-        for hdr in ("Host", "X-Agent-OS-Skill", "X-Agent-OS-Task"):
+        for hdr in ("Host", "X-Muse-Skill", "X-Muse-Task"):
             headers.pop(hdr, None)
 
         headers = await self._inject_credentials(skill_id, domain, headers)
@@ -188,7 +190,7 @@ class APIGateway:
         try:
             if self._session is None:
                 self._session = aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=30, connect=10),
+                    timeout=aiohttp.ClientTimeout(total=self._http_timeout_total, connect=self._http_timeout_connect),
                 )
 
             async with self._session.request(

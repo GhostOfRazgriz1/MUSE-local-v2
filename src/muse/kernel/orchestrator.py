@@ -215,6 +215,10 @@ class Orchestrator:
         # Memory consolidation ("dreaming")
         self._dreaming = DreamingManager(self)
 
+        # Conversation compaction (sliding-window summary)
+        from muse.kernel.compaction import CompactionManager
+        self._compaction = CompactionManager(self, self._session_repo, config.compaction)
+
         # Background task scheduler
         self._scheduler = Scheduler(db, self)
 
@@ -541,6 +545,9 @@ class Orchestrator:
             for r in rows
             if r["role"] in ("user", "assistant")
         ]
+        # Restore compaction state from last checkpoint
+        checkpoint_summary = await self._compaction.load_checkpoint(session_id)
+        self._compaction.reset(session_id, checkpoint_summary)
         return True
 
     async def create_session(self, title: str = "New conversation") -> dict:
@@ -554,6 +561,7 @@ class Orchestrator:
         self._session_start = session["created_at"]
         self._branch_head_id = None
         self._conversation_history = []
+        self._compaction.reset(session["id"])
         self._permissions.set_session(session["id"])
         return session
 
@@ -583,6 +591,13 @@ class Orchestrator:
             for r in rows
             if r["role"] in ("user", "assistant")
         ]
+        # Restore compaction from the checkpoint nearest the fork point
+        cp = await self._session_repo.get_checkpoint_near_message(
+            self._session_id, message_id,
+        )
+        self._compaction.reset(
+            self._session_id, cp["summary"] if cp else "",
+        )
         return result
 
     # ------------------------------------------------------------------
@@ -829,6 +844,7 @@ class Orchestrator:
             "content": user_message,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+        await self._compaction.incremental_compact(self._conversation_history)
 
         # Persist to DB and auto-title as fire-and-forget (non-blocking)
         asyncio.create_task(self._persist_message_and_title(user_message))
@@ -955,11 +971,13 @@ class Orchestrator:
         # the live history which may include results from concurrent tasks.
         history = history_snapshot if history_snapshot is not None else self._conversation_history
 
+        compaction_summary, compaction_recent = self._compaction.get_context_for_assembly(history)
         ctx = await self._context_assembler.assemble(
             instruction=user_message,
             query_embedding=query_embedding,
             model_context_window=context_window,
-            conversation_history=history,
+            conversation_history=compaction_recent,
+            running_summary=compaction_summary,
         )
 
         messages = ctx.to_messages()
@@ -1006,6 +1024,7 @@ class Orchestrator:
             "content": response_text,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+        await self._compaction.incremental_compact(self._conversation_history)
 
         asyncio.create_task(self._persist_and_demote(
             response_text, model,
@@ -1078,6 +1097,7 @@ class Orchestrator:
             "content": identity_msg,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+        await self._compaction.incremental_compact(self._conversation_history)
         if self._session_id:
             await self._session_repo.add_message(
                 self._session_id, "assistant", identity_msg, event_type="response",
@@ -1506,6 +1526,7 @@ class Orchestrator:
             "content": composite,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+        await self._compaction.incremental_compact(self._conversation_history)
 
     # ------------------------------------------------------------------
     # Goal decomposition
@@ -1716,6 +1737,7 @@ class Orchestrator:
                                 "content": f"[Plan paused at step {idx + 1}/{len(steps)}]",
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             })
+                            await self._compaction.incremental_compact(self._conversation_history)
                             return
 
                         # ── Steering check between steps ───────────
@@ -1785,6 +1807,7 @@ class Orchestrator:
             "content": f"[Goal completed: {user_message[:80]}]\n" + "\n".join(parts),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+        await self._compaction.incremental_compact(self._conversation_history)
 
         get_tracer().event("orchestrator", "plan_completed",
                            plan_id=plan_id,
@@ -1994,12 +2017,14 @@ class Orchestrator:
         history = history_snapshot if history_snapshot is not None else self._conversation_history
 
         # Assemble context
+        comp_summary, comp_recent = self._compaction.get_context_for_assembly(history)
         assembled_ctx = await self._context_assembler.assemble(
             instruction=instruction,
             query_embedding=query_embedding,
             model_context_window=context_window,
             namespace=skill_id,
-            conversation_history=history,
+            conversation_history=comp_recent,
+            running_summary=comp_summary,
         )
 
         # Determine isolation tier
@@ -2175,6 +2200,7 @@ class Orchestrator:
                         "content": summary,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     })
+                    await self._compaction.incremental_compact(self._conversation_history)
 
                     # Level 1: Post-task suggestion
                     try:
@@ -2367,6 +2393,7 @@ class Orchestrator:
                 "content": f"[Permission denied — request was not executed: {pending['message'][:100]}]",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
+            await self._compaction.incremental_compact(self._conversation_history)
 
             yield {"type": "error", "content": f"Permission denied. Cannot execute the request."}
 
@@ -2428,59 +2455,36 @@ class Orchestrator:
     # Conversation context for skills
     # ------------------------------------------------------------------
 
-    # Maximum raw conversation size (chars) before LLM compression kicks in.
-    _CONTEXT_CHAR_LIMIT = 8000
-
     async def _summarize_conversation(
         self, turns: list[dict], current_instruction: str,
     ) -> str:
         """Build conversation context for a skill brief.
 
-        Below the char limit the full conversation passes through as-is
-        so the skill (and its LLM calls) see everything.  Once the
-        conversation exceeds the limit, compress it with one LLM call.
+        Uses the compaction manager's sliding-window summary so context
+        degrades gracefully instead of hitting a sudden compression cliff.
         """
         if not turns:
             return ""
 
-        raw = "\n".join(
-            f"{t['role']}: {t['content']}" for t in turns
+        summary, recent = self._compaction.get_context_for_assembly(
+            self._conversation_history,
         )
 
-        if len(raw) <= self._CONTEXT_CHAR_LIMIT:
-            get_tracer().conversation_summary(len(turns), len(raw), len(raw))
-            return raw
+        recent_text = "\n".join(
+            f"{t['role']}: {t['content']}" for t in recent
+        )
 
-        # Over the limit — compress
-        try:
-            model = await self._model_router.resolve_model()
-            result = await self._provider.complete(
-                model=model,
-                messages=[
-                    {"role": "system", "content": (
-                        "Compress this conversation for a downstream tool. "
-                        "Preserve ALL specific facts, data, results, names, "
-                        "numbers, and URLs — these are critical. "
-                        "Drop pleasantries, filler, and verbose explanations. "
-                        "Keep it under 800 words."
-                    )},
-                    {"role": "user", "content": (
-                        f"Current request: \"{current_instruction}\"\n\n"
-                        f"Conversation to compress:\n{raw}"
-                    )},
-                ],
-                max_tokens=1200,
+        if summary:
+            combined = f"[Earlier context]:\n{summary}\n\n[Recent]:\n{recent_text}"
+            get_tracer().conversation_summary(
+                len(turns), len(summary) + len(recent_text), len(combined),
             )
-            self.track_llm_usage(result.tokens_in, result.tokens_out)
-            get_tracer().conversation_summary(len(turns), len(raw), len(result.text))
-            return result.text
-        except Exception as e:
-            logger.warning("Conversation compression failed: %s", e)
-            get_tracer().error("orchestrator", f"Conversation compression failed: {e}")
-            # Fallback: recent turns only
-            return "\n".join(
-                f"{t['role']}: {t['content']}" for t in turns[-4:]
-            )
+            return combined
+
+        # No summary yet (short conversation) — pass raw
+        raw = "\n".join(f"{t['role']}: {t['content']}" for t in turns)
+        get_tracer().conversation_summary(len(turns), len(raw), len(raw))
+        return raw
 
     # ------------------------------------------------------------------
     # Background tasks

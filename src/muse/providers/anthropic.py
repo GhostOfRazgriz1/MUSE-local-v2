@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 
-from .base import CompletionResult, ModelInfo, ProviderError
+from .base import CompletionResult, ModelInfo, ProviderError, LLM_TIMEOUT_TOTAL, LLM_TIMEOUT_CONNECT
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class AnthropicProvider:
         self._client = httpx.AsyncClient(
             base_url="https://api.anthropic.com",
             headers=headers,
-            timeout=httpx.Timeout(120.0, connect=10.0),
+            timeout=httpx.Timeout(LLM_TIMEOUT_TOTAL, connect=LLM_TIMEOUT_CONNECT),
         )
 
     # ------------------------------------------------------------------

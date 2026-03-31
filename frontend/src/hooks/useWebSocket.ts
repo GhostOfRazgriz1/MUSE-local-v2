@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatEvent, DisplayMessage, HistoryMessage } from "../types/events";
 import { getApiToken } from "./useApiToken";
+import { structuralCompactEvents } from "../utils/compaction";
 
 // Derive WebSocket and API URLs from the current page location.
 // In dev (Vite proxy), this resolves to localhost:3000 → proxied to :8080.
@@ -10,6 +11,12 @@ const _wsProto = _loc.protocol === "https:" ? "wss:" : "ws:";
 const WS_BASE = `${_wsProto}//${_loc.host}/api/ws/chat`;
 const MAX_BACKOFF = 30000;
 const INITIAL_BACKOFF = 1000;
+const MAX_EVENTS = 500;
+
+/** Event types that create pending user interactions. */
+const INTERACTION_START_TYPES = new Set(["permission_request", "skill_question", "skill_confirm"]);
+/** Event types that resolve pending interactions. */
+const INTERACTION_END_TYPES = new Set(["permission_approved", "permission_denied"]);
 
 export interface UseWebSocketReturn {
   sendMessage: (content: string) => void;
@@ -21,6 +28,8 @@ export interface UseWebSocketReturn {
   sessionId: string | null;
   /** Restored history messages (sent once on connect) */
   historyMessages: DisplayMessage[];
+  /** Request IDs of unresolved interactive prompts */
+  pendingInteractions: Set<string>;
 }
 
 export function useWebSocket(requestedSessionId: string | null, reconnectToken?: number, paused?: boolean): UseWebSocketReturn {
@@ -29,6 +38,9 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
   const [lastEvent, setLastEvent] = useState<ChatEvent | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [historyMessages, setHistoryMessages] = useState<DisplayMessage[]>([]);
+
+  const [pendingInteractions, setPendingInteractions] = useState<Set<string>>(new Set());
+  const pendingRef = useRef<Set<string>>(new Set());
 
   const wsRef = useRef<WebSocket | null>(null);
   const backoffRef = useRef(INITIAL_BACKOFF);
@@ -114,14 +126,34 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
             setEvents([]);
             return;
           }
+          // Track pending interactive events
+          if (INTERACTION_START_TYPES.has(parsed.type) && "request_id" in parsed) {
+            pendingRef.current = new Set(pendingRef.current).add(parsed.request_id);
+            setPendingInteractions(pendingRef.current);
+          } else if (INTERACTION_END_TYPES.has(parsed.type) && "request_id" in parsed) {
+            const next = new Set(pendingRef.current);
+            next.delete(parsed.request_id);
+            pendingRef.current = next;
+            setPendingInteractions(next);
+          }
+
           if (parsed.type === "session_updated") {
-            // Bubble up but don't add to chat events
-            setEvents((prev) => [...prev, parsed]);
+            setEvents((prev) => {
+              const next = [...prev, parsed];
+              return next.length > MAX_EVENTS
+                ? structuralCompactEvents(next, pendingRef.current)
+                : next;
+            });
             setLastEvent(parsed);
             return;
           }
 
-          setEvents((prev) => [...prev, parsed]);
+          setEvents((prev) => {
+            const next = [...prev, parsed];
+            return next.length > MAX_EVENTS
+              ? structuralCompactEvents(next, pendingRef.current)
+              : next;
+          });
           setLastEvent(parsed);
         } catch {
           // Ignore malformed messages
@@ -198,5 +230,5 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
     };
   }, [requestedSessionId, reconnectToken, paused, connect]);
 
-  return { sendMessage, sendRaw, lastEvent, connected, events, sessionId, historyMessages };
+  return { sendMessage, sendRaw, lastEvent, connected, events, sessionId, historyMessages, pendingInteractions };
 }

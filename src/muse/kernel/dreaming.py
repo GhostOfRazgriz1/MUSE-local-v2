@@ -209,6 +209,13 @@ class DreamingManager:
             value_type="text",
         )
 
+        # Also save a compaction checkpoint so the sliding-window summary
+        # is up-to-date when the session resumes.
+        try:
+            await self._orch._compaction._save_checkpoint_async()
+        except Exception as exc:
+            logger.debug("Dreaming: compaction checkpoint skipped: %s", exc)
+
         get_tracer().event("dreaming", "complete",
                            session_id=session_id,
                            memories_extracted=len(facts),

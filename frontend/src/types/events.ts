@@ -1,6 +1,6 @@
 export type ChatEvent =
   | { type: "thinking"; content: string }
-  | { type: "response_chunk"; delta: string }
+  | { type: "response_chunk"; delta: string; content?: string }
   | {
       type: "response";
       content: string;
@@ -108,7 +108,13 @@ export interface UserMessage {
   _createdAt?: string;
 }
 
-export type DisplayMessage = (ChatEvent & { _createdAt?: string }) | UserMessage;
+/** Runtime properties added by the frontend to chat events. */
+interface DisplayMeta {
+  _createdAt?: string;
+  _dbId?: number;
+}
+
+export type DisplayMessage = (ChatEvent & DisplayMeta) | (UserMessage & DisplayMeta);
 
 export interface SessionUsage {
   tokens_in: number;

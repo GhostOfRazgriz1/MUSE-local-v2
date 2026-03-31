@@ -55,10 +55,21 @@ class ExecutionConfig:
 
 
 @dataclass(frozen=True)
+class CompactionConfig:
+    raw_window_size: int = 12           # recent turns kept verbatim
+    checkpoint_interval: int = 50       # turns between periodic DB checkpoints
+    max_summary_words: int = 600        # target cap for running summary
+    fold_batch_size: int = 3            # high-importance msgs buffered before LLM fold
+    structural_only: bool = False       # True = disable LLM compaction (testing/cost)
+
+
+@dataclass(frozen=True)
 class GatewayConfig:
     host: str = "127.0.0.1"
     port: int = 8100
     global_rate_limit_rpm: int = 600
+    http_timeout_total: int = 30
+    http_timeout_connect: int = 10
 
 
 @dataclass(frozen=True)
@@ -113,6 +124,7 @@ class Config:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     registers: RegisterConfig = field(default_factory=RegisterConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
+    compaction: CompactionConfig = field(default_factory=CompactionConfig)
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     default_model: str = "anthropic/claude-sonnet-4"

@@ -790,10 +790,10 @@ stages:
 
 | Variable | Purpose |
 |----------|---------|
-| `AGENT_OS_TEST=1` | Enable test mode (disable real LLM calls) |
-| `AGENT_OS_TEST_DATA_DIR` | Override data_dir to temp directory |
-| `AGENT_OS_MOCK_LLM=1` | Use mock LLM provider |
-| `AGENT_OS_MOCK_KEYRING=1` | Use null keyring backend |
+| `MUSE_TEST=1` | Enable test mode (disable real LLM calls) |
+| `MUSE_TEST_DATA_DIR` | Override data_dir to temp directory |
+| `MUSE_MOCK_LLM=1` | Use mock LLM provider |
+| `MUSE_MOCK_KEYRING=1` | Use null keyring backend |
 
 ### Coverage Targets
 

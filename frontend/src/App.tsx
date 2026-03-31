@@ -3,7 +3,7 @@ import { useWebSocket } from "./hooks/useWebSocket";
 import { ChatStream } from "./components/ChatStream";
 import { TaskTray } from "./components/TaskTray";
 import { CostDashboard } from "./components/CostDashboard";
-import { Settings } from "./components/Settings";
+import { Settings } from "./components/settings";
 import { SessionSidebar } from "./components/SessionSidebar";
 import { FileBrowser } from "./components/FileBrowser";
 import { SetupCard } from "./components/SetupCard";
@@ -38,13 +38,13 @@ function App() {
     const last = events[events.length - 1];
     if (!last) return;
     if (last.type === "reminder") {
-      notifications.notify("Reminder", (last as any).what || (last as any).content);
+      notifications.notify("Reminder", last.what || last.content);
     } else if (last.type === "suggestion") {
-      notifications.notify("MUSE", (last as any).content);
+      notifications.notify("MUSE", last.content);
     } else if (last.type === "autonomous_action") {
-      notifications.notify(`MUSE ran ${(last as any).skill_id}`, (last as any).reason);
+      notifications.notify(`MUSE ran ${last.skill_id}`, last.reason);
     } else if (last.type === "skill_notify") {
-      notifications.notify("MUSE", (last as any).message);
+      notifications.notify("MUSE", last.message);
     }
   }, [events.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
