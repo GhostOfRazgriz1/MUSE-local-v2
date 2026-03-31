@@ -490,6 +490,10 @@ class LocalBridge:
                         self._task_id, result.tokens_in, result.tokens_out,
                     )
                     self._orch.track_llm_usage(result.tokens_in, result.tokens_out)
+                    await self._orch._permissions.consume_budget(
+                        "llm:complete", actions=1,
+                        tokens=result.tokens_in + result.tokens_out,
+                    )
                 _t = get_tracer()
                 _t.llm_call(f"skill:{self._skill_id}", model,
                             tokens_in=result.tokens_in, tokens_out=result.tokens_out)
@@ -502,13 +506,15 @@ class LocalBridge:
                          tokens_in=result.tokens_in,
                          tokens_out=result.tokens_out)
                 await self._pending_response.put(
-                    _Response(success=True, text=result.text, result=result.text, error=None)
+                    _Response(success=True, text=result.text, result=result.text, error=None,
+                              tokens_in=result.tokens_in, tokens_out=result.tokens_out)
                 )
             except Exception as e:
                 get_tracer().error("bridge", f"LLM call failed: {e}",
                                    task_id=self._task_id, skill_id=self._skill_id)
                 await self._pending_response.put(
-                    _Response(success=False, text="", result=None, error=str(e))
+                    _Response(success=False, text="", result=None, error=str(e),
+                              tokens_in=0, tokens_out=0)
                 )
 
         elif msg_type == "user_ask":
@@ -640,6 +646,10 @@ class LocalBridge:
                     headers=extra_headers,
                     content=message.body.encode() if message.body else None,
                 )
+                if self._orch:
+                    await self._orch._permissions.consume_budget(
+                        "web:fetch", actions=1,
+                    )
                 await self._pending_response.put(_Response(
                     success=True, status_code=resp.status_code,
                     headers=dict(resp.headers), body=resp.text, error=None,

@@ -7,6 +7,11 @@ from muse_sdk.errors import (
     ExternalServiceError,
     SkillError,
 )
+from muse_sdk.autonomous import (
+    autonomous_loop,
+    AutonomousResult,
+    FeedbackHistory,
+)
 
 __all__ = [
     "SkillContext",
@@ -15,4 +20,7 @@ __all__ = [
     "UserCancelled",
     "ExternalServiceError",
     "SkillError",
+    "autonomous_loop",
+    "AutonomousResult",
+    "FeedbackHistory",
 ]

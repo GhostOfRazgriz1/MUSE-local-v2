@@ -64,6 +64,13 @@ class CompactionConfig:
 
 
 @dataclass(frozen=True)
+class AutonomousConfig:
+    """Settings for autonomous retry loops (skill authoring, strategy adjustment, etc.)."""
+    max_attempts: int = 5
+    default_token_budget: int = 50_000
+
+
+@dataclass(frozen=True)
 class GatewayConfig:
     host: str = "127.0.0.1"
     port: int = 8100
@@ -125,6 +132,7 @@ class Config:
     registers: RegisterConfig = field(default_factory=RegisterConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
+    autonomous: AutonomousConfig = field(default_factory=AutonomousConfig)
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     default_model: str = "anthropic/claude-sonnet-4"

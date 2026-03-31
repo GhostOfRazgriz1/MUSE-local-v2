@@ -4,13 +4,9 @@ audit it, and install it if it passes.
 Flow:
   1. User describes the skill they want.
   2. Author uses LLM to generate skill.py + manifest.json.
-  3. Auditor runs static checks.
-     - Fail → Author gets feedback, retries ONCE.
-     - Second fail → escalate to user.
-  4. Auditor runs LLM review (only if static passed).
-     - Fail → Author gets feedback, retries ONCE.
-     - Second fail → escalate to user.
-  5. On pass → user confirms → SkillLoader.install().
+  3. Autonomous loop: audit → accumulate feedback → retry.
+     Bounded by token budget and max_attempts.
+  4. On pass → user confirms → SkillLoader.install().
 """
 from __future__ import annotations
 
@@ -29,9 +25,12 @@ from muse.skills.authoring.staging import StagingArea
 from muse.skills.loader import SkillLoader
 from muse.skills.manifest import SkillManifest
 
+from muse_sdk.autonomous import FeedbackHistory
+
 logger = logging.getLogger(__name__)
 
-MAX_RETRIES = 1  # one self-heal attempt before escalating to user
+DEFAULT_MAX_ATTEMPTS = 5
+DEFAULT_TOKEN_BUDGET = 50_000
 
 
 # ── Result types ────────────────────────────────────────────────────
@@ -133,6 +132,9 @@ class SkillAuthor:
         user_confirm: Callable[[str], Awaitable[bool]],
         user_notify: Callable[[str], Awaitable[None]],
         audit_log: Callable[..., Awaitable[None]] | None = None,
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        token_budget: int = DEFAULT_TOKEN_BUDGET,
+        token_counter: Callable[[], int] | None = None,
     ) -> None:
         self._staging = staging
         self._loader = loader
@@ -141,6 +143,9 @@ class SkillAuthor:
         self._user_confirm = user_confirm
         self._user_notify = user_notify
         self._audit_log = audit_log
+        self._max_attempts = max_attempts
+        self._token_budget = token_budget
+        self._token_counter = token_counter or (lambda: 0)
 
     # ------------------------------------------------------------------
     # Public API
@@ -163,8 +168,8 @@ class SkillAuthor:
         # Stage the files
         self._staging.write_skill(skill_name, code, manifest)
 
-        # ── Step 2: Audit (with one retry) ───────────────────────────
-        verdict = await self._audit_with_retry(
+        # ── Step 2: Autonomous audit loop ────────────────────────────
+        verdict, code, manifest = await self._audit_with_retry(
             skill_name, description, code, manifest,
         )
 
@@ -278,13 +283,25 @@ class SkillAuthor:
         description: str,
         code: str,
         manifest: dict[str, Any],
-    ) -> AuditVerdict:
-        """Run the audit pipeline. On failure, feed issues back to the LLM
-        for one retry attempt. On second failure, return the failing verdict."""
+    ) -> tuple[AuditVerdict, str, dict[str, Any]]:
+        """Autonomous audit loop with accumulated feedback.
 
-        for attempt in range(1 + MAX_RETRIES):
+        Returns (verdict, final_code, final_manifest).
+        """
+        feedback = FeedbackHistory()
+
+        for attempt in range(1, self._max_attempts + 1):
+            tokens_so_far = self._token_counter()
+            if tokens_so_far >= self._token_budget:
+                await self._user_notify(
+                    f"Token budget exhausted ({tokens_so_far:,}/{self._token_budget:,}). "
+                    f"Stopping after {attempt - 1} attempt(s)."
+                )
+                break
+
             await self._user_notify(
-                f"Auditing '{skill_name}' (attempt {attempt + 1})..."
+                f"Auditing '{skill_name}' (attempt {attempt}/{self._max_attempts}, "
+                f"{tokens_so_far:,}/{self._token_budget:,} tokens)..."
             )
 
             verdict = await audit_skill(
@@ -292,37 +309,40 @@ class SkillAuthor:
             )
 
             if verdict.passed:
-                return verdict
+                return verdict, code, manifest
 
-            # If we have retries left, try to self-heal
-            if attempt < MAX_RETRIES:
-                await self._user_notify(
-                    f"Audit found issues, attempting self-heal:\n"
-                    + "\n".join(f"  - {i}" for i in verdict.issues)
+            # Accumulate feedback from this attempt
+            feedback.add(attempt, verdict.issues, label=verdict.phase)
+
+            await self._user_notify(
+                f"Audit failed (attempt {attempt}):\n"
+                + "\n".join(f"  - {i}" for i in verdict.issues)
+            )
+
+            # Retry with ALL accumulated feedback
+            if attempt < self._max_attempts:
+                code = await self._retry_code_with_history(
+                    description, code, feedback,
                 )
-
-                if verdict.phase == "static":
-                    # Regenerate code and/or manifest based on static issues
-                    code = await self._retry_code(description, code, verdict.issues)
-                    manifest = await self._retry_manifest(
-                        description, code, manifest, verdict.issues,
-                    )
-                else:
-                    # LLM phase failed — regenerate both
-                    code = await self._retry_code(description, code, verdict.issues)
-                    manifest = await self._retry_manifest(
-                        description, code, manifest, verdict.issues,
-                    )
-
-                # Update staging with corrected files
+                manifest = await self._retry_manifest_with_history(
+                    description, code, manifest, feedback,
+                )
                 self._staging.write_skill(skill_name, code, manifest)
 
-        return verdict
+        return verdict, code, manifest
 
-    async def _retry_code(
-        self, description: str, previous_code: str, issues: list[str],
+    async def _retry_code_with_history(
+        self, description: str, previous_code: str, feedback: FeedbackHistory,
     ) -> str:
-        prompt = _build_retry_prompt(description, previous_code, issues)
+        all_feedback = feedback.format_for_prompt()
+        prompt = (
+            f"You are fixing a MUSE skill that has failed audit.\n\n"
+            f"ALL PREVIOUS FAILURES (fix every single one):\n\n"
+            f"{all_feedback}\n\n"
+            f"Original description: {description}\n\n"
+            f"Current code:\n```python\n{previous_code}\n```\n\n"
+            f"Fix ALL issues from ALL attempts. Output ONLY corrected Python code."
+        )
         raw = await self._llm_complete(
             prompt=prompt,
             system=_GENERATE_SYSTEM,
@@ -330,26 +350,15 @@ class SkillAuthor:
         )
         return _strip_fences(raw)
 
-    async def _retry_manifest(
+    async def _retry_manifest_with_history(
         self,
         description: str,
         code: str,
         previous_manifest: dict[str, Any],
-        issues: list[str],
+        feedback: FeedbackHistory,
     ) -> dict[str, Any]:
-        # Only retry manifest if there are manifest-related issues
-        manifest_issues = [
-            i for i in issues
-            if any(kw in i.lower() for kw in (
-                "manifest", "permission", "first-party", "lightweight",
-                "isolation", "missing", "declare",
-            ))
-        ]
-
-        if not manifest_issues:
-            return previous_manifest
-
-        prompt = _build_manifest_retry_prompt(description, code, manifest_issues)
+        all_feedback = feedback.format_for_prompt()
+        prompt = _build_manifest_retry_prompt(description, code, feedback.all_issues)
         raw = await self._llm_complete(
             prompt=prompt,
             system=_MANIFEST_SYSTEM,
@@ -361,7 +370,6 @@ class SkillAuthor:
         except json.JSONDecodeError:
             return previous_manifest
 
-        # Enforce non-negotiable fields
         manifest["isolation_tier"] = "standard"
         manifest["is_first_party"] = False
         manifest.setdefault("author", "muse:auto_generated")

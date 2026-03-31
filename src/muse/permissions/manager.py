@@ -165,6 +165,26 @@ class PermissionManager:
         )
 
     # ------------------------------------------------------------------
+    # Budget consumption
+    # ------------------------------------------------------------------
+
+    async def consume_budget(
+        self,
+        permission: str,
+        actions: int = 1,
+        tokens: int = 0,
+    ) -> bool:
+        """Record actual resource consumption against a permission's budget.
+
+        Called AFTER a permission-gated operation completes successfully.
+        Returns False if the budget is now exceeded (future operations will
+        be blocked by check_budget, but the current one already happened).
+        """
+        return await self.trust_budget.consume(
+            permission=permission, actions=actions, tokens=tokens,
+        )
+
+    # ------------------------------------------------------------------
     # Request / approve / deny flow
     # ------------------------------------------------------------------
 

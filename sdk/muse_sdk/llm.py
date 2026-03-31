@@ -12,6 +12,21 @@ class LLMClient:
 
     def __init__(self, ipc_client):
         self._ipc = ipc_client
+        self._total_tokens_in: int = 0
+        self._total_tokens_out: int = 0
+
+    @property
+    def tokens_used(self) -> int:
+        """Total tokens (in + out) consumed by this skill so far."""
+        return self._total_tokens_in + self._total_tokens_out
+
+    @property
+    def tokens_in(self) -> int:
+        return self._total_tokens_in
+
+    @property
+    def tokens_out(self) -> int:
+        return self._total_tokens_out
 
     async def complete(
         self,
@@ -31,6 +46,8 @@ class LLMClient:
             json_mode=False,
         ))
         resp = await self._ipc.receive()
+        self._total_tokens_in += getattr(resp, "tokens_in", 0) or 0
+        self._total_tokens_out += getattr(resp, "tokens_out", 0) or 0
         if hasattr(resp, "error") and resp.error:
             from muse_sdk.errors import ExternalServiceError
             raise ExternalServiceError("llm", message=resp.error)
@@ -57,6 +74,8 @@ class LLMClient:
             json_mode=True,
         ))
         resp = await self._ipc.receive()
+        self._total_tokens_in += getattr(resp, "tokens_in", 0) or 0
+        self._total_tokens_out += getattr(resp, "tokens_out", 0) or 0
         if hasattr(resp, "error") and resp.error:
             from muse_sdk.errors import ExternalServiceError
             raise ExternalServiceError("llm", message=resp.error)

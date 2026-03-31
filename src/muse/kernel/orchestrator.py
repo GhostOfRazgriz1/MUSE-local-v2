@@ -2143,6 +2143,10 @@ class Orchestrator:
                     "sandbox_dir": str(self._config.skills_dir / skill_id / "sandbox"),
                     "timeout_seconds": manifest.timeout_seconds,
                     "model": model,
+                    "autonomous": {
+                        "max_attempts": self._config.autonomous.max_attempts,
+                        "default_token_budget": self._config.autonomous.default_token_budget,
+                    },
                 },
             )
 
