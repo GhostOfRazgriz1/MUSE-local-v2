@@ -29,7 +29,7 @@ muse/
 - **Scheduler** — background tasks on intervals, persisted in DB, results in `_scheduled` namespace
 
 ## Running
-- **Start**: `start.bat` (Windows) or `python -m muse.main`
+- **Start**: `start.bat` (Windows), `./start.sh` (macOS/Linux), or `python -m muse.main`
 - **Debug mode**: Set `debug: bool = True` in Config or pass `--debug`
 - **Tests**: `python tests/test_agent.py` (run from outside project tree to avoid uvicorn reload)
 - **Logs**: `%LOCALAPPDATA%/muse/logs/` (when debug=True)
