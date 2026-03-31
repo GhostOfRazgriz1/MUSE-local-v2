@@ -148,6 +148,8 @@ class OnboardingFlow:
             yield _response(reply)
 
     def _write_identity(self, content: str) -> None:
+        from muse.kernel.context_assembly import validate_identity
+        content = validate_identity(content)
         self._config.data_dir.mkdir(parents=True, exist_ok=True)
         self._config.identity_path.write_text(content, encoding="utf-8")
         logger.info("Identity written to %s", self._config.identity_path)

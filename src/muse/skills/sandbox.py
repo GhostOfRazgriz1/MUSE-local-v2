@@ -585,6 +585,20 @@ class LocalBridge:
                     ))
                     return
 
+                # Also verify the skill has credential:read permission granted.
+                # Manifest declaration alone is not enough — prevents a
+                # malicious manifest from self-granting access to any credential.
+                cred_perm = "credential:read"
+                perm_check = await self._orch._permissions.check_permission(
+                    self._skill_id, cred_perm,
+                )
+                if not perm_check.allowed:
+                    await self._pending_response.put(_Response(
+                        success=False, value=None,
+                        error=f"Skill '{self._skill_id}' does not have '{cred_perm}' permission granted",
+                    ))
+                    return
+
                 secret = await self._orch._vault.retrieve(message.credential_id)
                 await self._pending_response.put(_Response(
                     success=secret is not None, value=secret, error=None,

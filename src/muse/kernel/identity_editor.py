@@ -73,6 +73,8 @@ async def handle_identity_edit(
     # Extract and write the updated identity
     new_identity = _extract_identity(reply)
     if new_identity:
+        from muse.kernel.context_assembly import validate_identity
+        new_identity = validate_identity(new_identity)
         config.data_dir.mkdir(parents=True, exist_ok=True)
         config.identity_path.write_text(new_identity, encoding="utf-8")
         logger.info("Identity updated at %s", config.identity_path)

@@ -183,8 +183,16 @@ class ProactivityManager:
         if not await self.is_allowed(1):
             return None
 
-        # Get the skills catalog so the LLM knows what's available
-        skill_catalog = self._orch._classifier._cached_skill_lines
+        # Build a compact skill catalog — only the current skill + common
+        # follow-ups. Saves ~200-300 tokens vs. the full catalog.
+        all_skills = self._orch._classifier._skills
+        _COMMON_FOLLOW_UPS = {"Files", "Notes", "Search", "Reminders", "Email"}
+        relevant_ids = {skill_id} | _COMMON_FOLLOW_UPS
+        skill_catalog = "\n".join(
+            f"  - {sid}: {info['description']}"
+            for sid, info in all_skills.items()
+            if sid in relevant_ids
+        ) or self._orch._classifier._cached_skill_lines
 
         model = await self._orch._model_router.resolve_model()
 
@@ -393,6 +401,12 @@ class ProactivityManager:
         skill_catalog = self._orch._classifier._cached_skill_lines
         model = await self._orch._model_router.resolve_model()
 
+        # Escape skill names to prevent prompt injection via skill IDs.
+        safe_allowed = ", ".join(
+            s.replace('"', '').replace("'", "").replace("\n", "")
+            for s in allowed_skills
+        )
+
         try:
             result = await self._orch._provider.complete(
                 model=model,
@@ -400,7 +414,7 @@ class ProactivityManager:
                     {"role": "system", "content": (
                         "You are deciding if the AI agent should take an autonomous "
                         "background action. The user has explicitly allowed these "
-                        f"skills to run autonomously: {', '.join(allowed_skills)}\n\n"
+                        f"skills to run autonomously: {safe_allowed}\n\n"
                         f"Available skills:\n{skill_catalog}\n\n"
                         "Based on the time and context, suggest 0-2 actions. Each:\n"
                         "{\"skill_id\": \"...\", \"instruction\": \"...\", "
@@ -413,7 +427,7 @@ class ProactivityManager:
                     {"role": "user", "content": (
                         f"Time: {now.strftime('%A %H:%M')} ({self._orch._user_tz})\n"
                         f"Patterns: {pattern_summary}\n"
-                        f"Allowed skills: {', '.join(allowed_skills)}"
+                        f"Allowed skills: {safe_allowed}"
                     )},
                 ],
                 max_tokens=300,
@@ -428,11 +442,15 @@ class ProactivityManager:
             if not isinstance(opportunities, list):
                 return []
 
-            # Filter to only allowed skills
-            return [
-                o for o in opportunities
-                if o.get("skill_id") in allowed_skills
-            ]
+            # Filter to only allowed skills and sanitize instructions
+            from muse.kernel.context_assembly import _sanitize_memory_value
+            sanitized = []
+            for o in opportunities:
+                if o.get("skill_id") not in allowed_skills:
+                    continue
+                o["instruction"] = _sanitize_memory_value(o.get("instruction", ""))
+                sanitized.append(o)
+            return sanitized
 
         except Exception as e:
             logger.debug("Autonomous opportunity check failed: %s", e)

@@ -23,7 +23,7 @@ import aiosqlite
 
 from muse.config import Config
 from muse.db.session_repository import SessionRepository
-from muse.kernel.context_assembly import ContextAssembler, AssembledContext, load_identity
+from muse.kernel.context_assembly import ContextAssembler, AssembledContext, load_identity, _sanitize_memory_value
 from muse.kernel.identity_editor import (
     handle_identity_edit,
     SKILL_ID as IDENTITY_SKILL_ID,
@@ -1085,6 +1085,10 @@ class Orchestrator:
         except Exception as e:
             logger.debug("Emotional context injection skipped: %s", e)
 
+        # Mood hint only for inline (user-facing) responses — saves tokens
+        # on skill execution, classification, and planning calls.
+        ctx.include_mood_hint = True
+
         messages = ctx.to_messages()
 
         # Stream the response token-by-token
@@ -2104,6 +2108,9 @@ class Orchestrator:
         This is the shared execution core used by both _handle_delegated
         (single task) and _handle_multi_delegated (multi-task).
         """
+        # Sanitize instruction to prevent prompt injection from LLM-generated plans.
+        instruction = _sanitize_memory_value(instruction)
+
         manifest = await self._skill_loader.get_manifest(skill_id)
         if not manifest:
             yield {"type": "error", "content": f"Skill '{skill_id}' not found."}

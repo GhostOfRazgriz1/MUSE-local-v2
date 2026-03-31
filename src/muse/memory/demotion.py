@@ -51,6 +51,28 @@ def _slugify(text: str) -> str:
     return text.strip("-")[:80]
 
 
+# Patterns that indicate a fact value is suspicious (possible prompt injection
+# or error dump that leaked through fact extraction).
+_SUSPICIOUS_FACT_RE = re.compile(
+    r"\[(?:SYSTEM|INST|OVERRIDE|ADMIN)\b"
+    r"|ignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions"
+    r"|failed\s+LLM\s+review"
+    r"|Skill\s+'[^']+'\s+failed"
+    r"|traceback\s+\(most\s+recent"
+    r"|<script|<iframe|javascript:",
+    re.IGNORECASE,
+)
+
+
+def _is_valid_fact(value: str) -> bool:
+    """Return True if a fact value looks legitimate (not injection or error dump)."""
+    if not value or len(value) > 500:
+        return False
+    if _SUSPICIOUS_FACT_RE.search(value):
+        return False
+    return True
+
+
 class DemotionManager:
     """Orchestrates memory demotion across tiers."""
 
@@ -86,6 +108,18 @@ class DemotionManager:
                 value = " ".join(g.strip() for g in groups if g).strip()
                 if not value or value in seen_values:
                     continue
+                if not _is_valid_fact(value):
+                    continue
+                # Substring dedup: skip if this value is contained in an
+                # already-seen value (or vice versa) to avoid near-duplicates
+                # from overlapping regex patterns.
+                is_dup = False
+                for existing in seen_values:
+                    if value in existing or existing in value:
+                        is_dup = True
+                        break
+                if is_dup:
+                    continue
                 seen_values.add(value)
                 facts.append({
                     "key": _slugify(value),
@@ -114,10 +148,10 @@ class DemotionManager:
 
         Returns the list of facts that were actually inserted.
         """
-        # Filter out facts with missing key/value upfront
+        # Filter out facts with missing key/value or suspicious content
         valid_facts = [
             f for f in facts
-            if f.get("key") and f.get("value")
+            if f.get("key") and f.get("value") and _is_valid_fact(f["value"])
         ]
         if not valid_facts:
             return []
