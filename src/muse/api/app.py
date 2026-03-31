@@ -113,12 +113,20 @@ def create_app(orchestrator=None) -> FastAPI:
     # Unauthenticated by design (chicken-and-egg: you need the token to
     # authenticate, but you need this endpoint to get the token).
     # Restricted to localhost connections only.
+    #
+    # In production binaries (Electron/Tauri), the token is delivered via
+    # IPC instead of HTTP.  Set ``server.expose_token_endpoint: false``
+    # in config to disable this endpoint entirely.
     from muse.api.auth import get_token
 
     _LOCALHOST = {"127.0.0.1", "::1", "localhost"}
 
     @app.get("/api/auth/token")
     async def auth_token(request: Request):
+        # Check if the endpoint is disabled in config (production mode)
+        orch = get_orchestrator()
+        if orch and hasattr(orch, "_config") and not orch._config.server.expose_token_endpoint:
+            raise HTTPException(404, "Not found")
         client_host = request.client.host if request.client else ""
         if client_host not in _LOCALHOST:
             raise HTTPException(403, "Token endpoint is only available from localhost")

@@ -84,6 +84,10 @@ class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8080
     allow_remote: bool = False
+    # Expose GET /api/auth/token for browser-based token bootstrap.
+    # Set to False in production binaries where the token is delivered
+    # via IPC (e.g. Electron/Tauri webview) instead of HTTP.
+    expose_token_endpoint: bool = True
 
 
 @dataclass(frozen=True)

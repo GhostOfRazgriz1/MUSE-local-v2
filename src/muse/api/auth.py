@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import stat
 from pathlib import Path
 
 from fastapi import Header, HTTPException, Query, WebSocket, status
@@ -21,6 +22,34 @@ from fastapi import Header, HTTPException, Query, WebSocket, status
 logger = logging.getLogger(__name__)
 
 _TOKEN: str | None = None
+
+
+def _restrict_windows_acl(path: Path) -> None:
+    """Restrict a file so only the current user can read/write it on Windows.
+
+    Uses ``icacls`` to remove inherited permissions and grant access only
+    to the current user.  Falls back to a basic chmod if icacls is
+    unavailable.
+    """
+    import subprocess
+    try:
+        user = os.environ.get("USERNAME", os.environ.get("USER", ""))
+        if not user:
+            logger.warning("Cannot determine username for ACL; token file may be world-readable")
+            return
+        # Remove all inherited permissions, then grant only to current user
+        subprocess.run(
+            ["icacls", str(path), "/inheritance:r",
+             "/grant:r", f"{user}:(R,W)"],
+            check=True, capture_output=True, timeout=10,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+        logger.warning("Failed to restrict token file ACL via icacls: %s", e)
+        # Fallback: remove group/other read via Python (limited on NTFS but better than nothing)
+        try:
+            path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            pass
 
 
 def init_auth(data_dir: Path) -> str:
@@ -39,7 +68,9 @@ def init_auth(data_dir: Path) -> str:
     token_path.write_text(_TOKEN, encoding="utf-8")
 
     # Restrict permissions so only the current user can read it
-    if os.name != "nt":
+    if os.name == "nt":
+        _restrict_windows_acl(token_path)
+    else:
         token_path.chmod(0o600)
 
     logger.info("Generated new API token at %s", token_path)

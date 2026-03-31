@@ -14,6 +14,18 @@ from muse.debug import get_tracer
 
 logger = logging.getLogger(__name__)
 
+# Allowed WebSocket origins — prevents cross-site WebSocket hijacking.
+_ALLOWED_WS_ORIGINS = {
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "https://localhost:3000", "https://127.0.0.1:3000",
+    "http://localhost:8080", "http://127.0.0.1:8080",
+    "https://localhost:8080", "https://127.0.0.1:8080",
+}
+
+# Maximum user message length (characters).  Prevents token explosion
+# and excessive LLM costs from a single message.
+MAX_MESSAGE_LENGTH = 32_000
+
 # REST endpoints — bearer-token auth applied via router dependencies in app.py
 router = APIRouter(tags=["chat"])
 
@@ -42,6 +54,15 @@ async def chat_websocket(
     Client sends: {"type": "message", "content": "..."}
     Server sends: stream of event dicts from the orchestrator
     """
+    # Validate Origin header — prevents cross-site WebSocket hijacking.
+    # Browsers always send Origin on WS upgrades; its absence means a
+    # non-browser client (curl, Python), which is fine if the token is valid.
+    origin = (websocket.headers.get("origin") or "").rstrip("/").lower()
+    if origin and origin not in _ALLOWED_WS_ORIGINS:
+        logger.warning("Rejected WebSocket from disallowed origin: %s", origin)
+        await websocket.close(code=1008)
+        return
+
     # Authenticate before accepting the connection
     try:
         await require_ws_token(websocket, token)
@@ -223,6 +244,13 @@ async def chat_websocket(
             if msg_type == "message":
                 content = data.get("content", "").strip()
                 if not content:
+                    continue
+                if len(content) > MAX_MESSAGE_LENGTH:
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": f"Message too long ({len(content):,} chars). "
+                                   f"Maximum is {MAX_MESSAGE_LENGTH:,} characters.",
+                    })
                     continue
                 await _ensure_session()
                 # Run each message as an independent task so the user
