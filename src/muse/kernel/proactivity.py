@@ -602,8 +602,9 @@ class ProactivityManager:
         except Exception as e:
             logger.debug("Failed to fetch dreaming suggestions for greeting: %s", e)
 
-        # Relationship stats
-        stats = {"sessions": 0, "memories": 0, "days_together": 0}
+        # Relationship stats + progression level
+        stats = {"sessions": 0, "memories": 0, "days_together": 0,
+                 "relationship_level": 1, "relationship_label": "Just getting started"}
         try:
             session_stats = await self._orch._session_repo.get_session_stats()
             stats["sessions"] = session_stats["session_count"]
@@ -617,6 +618,23 @@ class ProactivityManager:
             stats["memories"] = await self._orch._memory_repo.count_entries()
         except Exception as e:
             logger.debug("Failed to fetch memory count for greeting: %s", e)
+        try:
+            rel = await self._orch._emotions.compute_relationship_score()
+            stats["relationship_level"] = rel["level"]
+            stats["relationship_label"] = rel["label"]
+        except Exception as e:
+            logger.debug("Failed to compute relationship level for greeting: %s", e)
+
+        # Emotional context for greeting (gated by relationship level)
+        emotional_greeting_context = ""
+        try:
+            emo_ctx = await self._orch._emotions.get_emotional_context(
+                stats["relationship_level"]
+            )
+            if emo_ctx:
+                emotional_greeting_context = emo_ctx
+        except Exception as e:
+            logger.debug("Failed to get emotional context for greeting: %s", e)
 
         # Helper to build the result dict
         def _make_result(content: str) -> dict:
@@ -688,6 +706,8 @@ class ProactivityManager:
             context_parts.append("Suggestions to offer:\n" + "\n".join(suggestion_parts))
         if pattern_summary and "No recent" not in pattern_summary:
             context_parts.append(f"User patterns:\n{pattern_summary}")
+        if emotional_greeting_context:
+            context_parts.append(emotional_greeting_context)
 
         context_block = "\n\n".join(context_parts) if context_parts else "No special context."
 

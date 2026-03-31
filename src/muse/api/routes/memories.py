@@ -11,12 +11,20 @@ from muse.api.app import get_orchestrator
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["memories"])
 
-# Human-friendly labels for internal namespaces.
-_NS_LABELS = {
+# Namespaces shown to the user in the Memory panel.
+# Internal namespaces (_patterns, _system, _scheduled, Files) are excluded
+# because they contain raw JSON tracking data, not human-readable memories.
+_CONSUMER_NS = {
     "_profile": "About You",
     "_facts": "Things I've Learned",
     "_project": "Your Projects",
     "_conversation": "Conversation Highlights",
+    "_emotions": "Moments",
+}
+
+# All known namespaces (consumer + internal) for stats counting.
+_ALL_NS_LABELS = {
+    **_CONSUMER_NS,
     "_patterns": "Your Routines",
     "_system": "System",
     "_scheduled": "Scheduled Tasks",
@@ -24,7 +32,22 @@ _NS_LABELS = {
 
 
 def _friendly_ns(ns: str) -> str:
-    return _NS_LABELS.get(ns, ns.strip("_").replace("_", " ").title())
+    return _ALL_NS_LABELS.get(ns, ns.strip("_").replace("_", " ").title())
+
+
+def _is_consumer_visible(entry: dict) -> bool:
+    """Return True if a memory entry should be shown to the user."""
+    ns = entry.get("namespace", "")
+    if ns not in _CONSUMER_NS:
+        return False
+    value = (entry.get("value") or "").strip()
+    # Skip raw JSON blobs (internal tracking data that leaked in)
+    if value.startswith(("{", "[", '"{')):
+        return False
+    # Skip entries that look like error dumps
+    if "failed LLM review" in value or "Skill '" in value:
+        return False
+    return True
 
 
 def _entry_to_item(entry: dict) -> dict:
@@ -46,14 +69,14 @@ async def list_memories(
     namespace: str | None = Query(None, description="Filter by namespace"),
     limit: int = Query(200, ge=1, le=500),
 ):
-    """Return all non-superseded memories, optionally filtered by namespace."""
+    """Return consumer-visible memories, optionally filtered by namespace."""
     orchestrator = get_orchestrator()
     if not orchestrator:
         raise HTTPException(503, "Orchestrator not ready")
 
     repo = orchestrator._memory_repo
     entries = await repo.get_by_relevance(namespace=namespace, limit=limit, min_score=0.0)
-    items = [_entry_to_item(e) for e in entries]
+    items = [_entry_to_item(e) for e in entries if _is_consumer_visible(e)]
 
     # Group by namespace for the profile card view.
     groups: dict[str, list[dict]] = {}
@@ -65,7 +88,7 @@ async def list_memories(
 
 @router.get("/memories/stats")
 async def memory_stats():
-    """Return aggregate memory statistics."""
+    """Return aggregate memory statistics and relationship progression."""
     orchestrator = get_orchestrator()
     if not orchestrator:
         raise HTTPException(503, "Orchestrator not ready")
@@ -73,14 +96,28 @@ async def memory_stats():
     repo = orchestrator._memory_repo
     total = await repo.count_entries()
 
-    # Count per namespace.
+    # Count per consumer-visible namespace.
     ns_counts: dict[str, int] = {}
-    for ns in list(_NS_LABELS.keys()):
+    for ns in list(_CONSUMER_NS.keys()):
         keys = await repo.list_keys(ns)
         if keys:
             ns_counts[_friendly_ns(ns)] = len(keys)
 
-    return {"total": total, "by_category": ns_counts}
+    # Relationship progression
+    relationship = {
+        "level": 1, "label": "Just getting started",
+        "progress": 0.0, "capabilities": [], "next_capabilities": [],
+    }
+    try:
+        relationship = await orchestrator._emotions.compute_relationship_score()
+    except Exception as e:
+        logger.debug("Failed to compute relationship score: %s", e)
+
+    return {
+        "total": total,
+        "by_category": ns_counts,
+        "relationship": relationship,
+    }
 
 
 @router.post("/memories")

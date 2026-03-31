@@ -5234,6 +5234,75 @@ textarea:focus-visible {
   opacity: 0.85;
 }
 
+/* Relationship progression */
+.memory-progression {
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.memory-progression-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.memory-progression-label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.memory-progression-bar-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.memory-progression-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.6s var(--ease-out);
+  min-width: 2px;
+}
+.memory-progression-caps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.memory-cap-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+.memory-cap-item.unlocked {
+  color: var(--text-secondary);
+}
+.memory-cap-item.unlocked svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.memory-cap-item.locked {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+.memory-cap-dot {
+  width: 12px;
+  height: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.memory-cap-dot::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  border: 1px solid var(--text-muted);
+}
+
 /* Namespace groups */
 .memory-ns-group {
   margin-bottom: 2px;

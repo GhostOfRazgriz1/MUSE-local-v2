@@ -66,7 +66,7 @@ export type ChatEvent =
       content: string;
       suggestions: Array<{ id: string; content: string; skill_id: string }>;
       reminders: Array<{ what: string; when: string }>;
-      stats: { sessions: number; memories: number; days_together: number };
+      stats: { sessions: number; memories: number; days_together: number; relationship_level: number; relationship_label: string };
       tokens_in: number;
       tokens_out: number;
       model: string;

@@ -204,6 +204,10 @@ class Orchestrator:
         # Usage pattern tracking
         self._patterns = PatternTracker(memory_repo)
 
+        # Emotion tracking and relationship progression
+        from muse.kernel.emotions import EmotionTracker
+        self._emotions = EmotionTracker(memory_repo, self._session_repo)
+
         # Skill execution hooks (before/after interception)
         from muse.kernel.hooks import HookRegistry
         self._hooks = HookRegistry()
@@ -563,6 +567,7 @@ class Orchestrator:
         self._conversation_history = []
         self._compaction.reset(session["id"])
         self._permissions.set_session(session["id"])
+        self._emotions.reset_session()
         return session
 
     async def ensure_session(self) -> str:
@@ -852,6 +857,14 @@ class Orchestrator:
         # Persist to DB and auto-title as fire-and-forget (non-blocking)
         asyncio.create_task(self._persist_message_and_title(user_message))
 
+        # Lightweight emotion analysis (no LLM call — just pattern matching)
+        try:
+            signal = self._emotions.analyze_message(user_message)
+            if signal:
+                asyncio.create_task(self._emotions.persist_signal(signal))
+        except Exception as e:
+            logger.debug("Emotion analysis skipped: %s", e)
+
         try:
             _t = get_tracer()
             _t.handle_message(user_message, self._session_id)
@@ -982,6 +995,15 @@ class Orchestrator:
             conversation_history=compaction_recent,
             running_summary=compaction_summary,
         )
+
+        # Inject emotional context (gated by relationship level)
+        try:
+            rel = await self._emotions.compute_relationship_score()
+            emo_ctx = await self._emotions.get_emotional_context(rel["level"])
+            if emo_ctx:
+                ctx.emotional_context = emo_ctx
+        except Exception as e:
+            logger.debug("Emotional context injection skipped: %s", e)
 
         messages = ctx.to_messages()
 

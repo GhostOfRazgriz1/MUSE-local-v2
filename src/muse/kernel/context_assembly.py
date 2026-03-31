@@ -43,6 +43,7 @@ class AssembledContext:
     task_context_entries: list[dict] = field(default_factory=list)
     conversation_turns: list[dict] = field(default_factory=list)
     instruction: str = ""
+    emotional_context: str = ""  # Injected by orchestrator when relationship level permits
 
     # Token accounting
     system_tokens: int = 0
@@ -85,6 +86,9 @@ class AssembledContext:
                 for e in self.task_context_entries
             )
             system_parts.append(f"\nRelevant Context:\n{context_text}")
+
+        if self.emotional_context:
+            system_parts.append(f"\n{self.emotional_context}")
 
         messages.append({"role": "system", "content": "\n".join(system_parts)})
 

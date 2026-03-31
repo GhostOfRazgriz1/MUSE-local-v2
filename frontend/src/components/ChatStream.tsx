@@ -362,6 +362,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
 
         if (
           evt.type === "response" ||
+          evt.type === "greeting" ||
           evt.type === "error" ||
           evt.type === "task_started" ||
           evt.type === "task_completed" ||
@@ -709,8 +710,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                         <div className="greeting-card-stats">
                           {gst.sessions} {gst.sessions === 1 ? "session" : "sessions"}
                           {gst.memories > 0 && <> · <span className="greeting-stats-memories" onClick={onOpenMemories} role="button" tabIndex={0}>{gst.memories} {gst.memories === 1 ? "memory" : "memories"}</span></>}
-                          {gst.days_together > 1 && <> · {gst.days_together} days</>}
-                          {gst.days_together <= 1 && gst.sessions <= 1 && <> · Just getting started</>}
+                          {" · "}{gst.relationship_label || (gst.days_together <= 1 && gst.sessions <= 1 ? "Just getting started" : `${gst.days_together} days`)}
                         </div>
                       )}
                     </div>

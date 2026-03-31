@@ -125,7 +125,7 @@ class DreamingManager:
                     "remembering for future sessions.\n\n"
                     "Output a JSON array of memory entries. Each entry:\n"
                     "{\n"
-                    '  "namespace": one of "_profile", "_project", "_facts",\n'
+                    '  "namespace": one of "_profile", "_project", "_facts", "_emotions",\n'
                     '  "key": short slug (e.g. "user-prefers-dark-mode"),\n'
                     '  "value": the fact or knowledge to remember\n'
                     "}\n\n"
@@ -133,6 +133,12 @@ class DreamingManager:
                     "- _profile: user preferences, role, expertise, habits\n"
                     "- _project: project decisions, tech stack, constraints, deadlines\n"
                     "- _facts: research findings, key data, important conclusions\n"
+                    "- _emotions: life events the user mentioned (job interviews, "
+                    "deadlines, celebrations, health, travel, etc.) along with "
+                    "how they seemed to feel about them. Format the value as a "
+                    "natural sentence, e.g. 'User mentioned an upcoming job "
+                    "interview and seemed nervous about it' or 'User was excited "
+                    "about launching their new project'.\n"
                     "- Skip ephemeral info (greetings, task status, errors)\n"
                     "- Skip things that are obvious from code or git history\n"
                     "- Each value should be self-contained and useful in isolation\n"
@@ -163,7 +169,7 @@ class DreamingManager:
             memories = memories.get("memories", []) if isinstance(memories, dict) else []
 
         # ── Step 2: Store via demotion pipeline ─────────────────
-        valid_namespaces = {"_profile", "_project", "_facts"}
+        valid_namespaces = {"_profile", "_project", "_facts", "_emotions"}
         facts = []
         for mem in memories:
             ns = mem.get("namespace", "")

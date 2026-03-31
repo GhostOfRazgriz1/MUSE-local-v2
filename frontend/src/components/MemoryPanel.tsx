@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { IconX, IconTrash, IconPlus, IconBrain, IconChevronDown, IconChevronRight } from "./Icons";
+import { IconX, IconTrash, IconPlus, IconBrain, IconChevronDown, IconChevronRight, IconCheck } from "./Icons";
 import { apiFetch } from "../hooks/useApiToken";
 
 interface MemoryItem {
@@ -13,6 +13,14 @@ interface MemoryItem {
   access_count: number;
 }
 
+interface RelationshipInfo {
+  level: number;
+  label: string;
+  progress: number;
+  capabilities: string[];
+  next_capabilities: string[];
+}
+
 interface MemoryPanelProps {
   onClose: () => void;
 }
@@ -20,9 +28,10 @@ interface MemoryPanelProps {
 /** Order for known namespace categories. */
 const NS_ORDER: Record<string, number> = {
   "_profile": 0,
-  "_facts": 1,
-  "_project": 2,
-  "_patterns": 3,
+  "_emotions": 1,
+  "_facts": 2,
+  "_project": 3,
+  "_patterns": 4,
   "_conversation": 4,
   "_system": 5,
   "_scheduled": 6,
@@ -50,6 +59,7 @@ function friendlyDate(iso: string): string {
 export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [groups, setGroups] = useState<Record<string, MemoryItem[]>>({});
+  const [relationship, setRelationship] = useState<RelationshipInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [collapsedNs, setCollapsedNs] = useState<Set<string>>(new Set());
   const [addingValue, setAddingValue] = useState("");
@@ -59,11 +69,19 @@ export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
 
   const fetchMemories = useCallback(async () => {
     try {
-      const res = await apiFetch("/api/memories");
-      if (!res.ok) return;
-      const data = await res.json();
-      setItems(data.memories || []);
-      setGroups(data.groups || {});
+      const [memRes, statsRes] = await Promise.all([
+        apiFetch("/api/memories"),
+        apiFetch("/api/memories/stats"),
+      ]);
+      if (memRes.ok) {
+        const data = await memRes.json();
+        setItems(data.memories || []);
+        setGroups(data.groups || {});
+      }
+      if (statsRes.ok) {
+        const stats = await statsRes.json();
+        if (stats.relationship) setRelationship(stats.relationship);
+      }
     } catch {
       // ignore
     } finally {
@@ -181,6 +199,35 @@ export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
           </div>
         ) : (
           <>
+            {/* Relationship progression */}
+            {relationship && (
+              <div className="memory-progression">
+                <div className="memory-progression-header">
+                  <span className="memory-progression-label">{relationship.label}</span>
+                </div>
+                <div className="memory-progression-bar-track">
+                  <div
+                    className="memory-progression-bar-fill"
+                    style={{ width: `${Math.round(relationship.progress * 100)}%` }}
+                  />
+                </div>
+                <div className="memory-progression-caps">
+                  {relationship.capabilities.map((cap) => (
+                    <div key={cap} className="memory-cap-item unlocked">
+                      <IconCheck size={12} />
+                      <span>{cap}</span>
+                    </div>
+                  ))}
+                  {relationship.next_capabilities.map((cap) => (
+                    <div key={cap} className="memory-cap-item locked">
+                      <span className="memory-cap-dot" />
+                      <span>{cap}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Profile card — grouped by namespace */}
             <div className="memory-profile-section">
               <div className="memory-section-header">
