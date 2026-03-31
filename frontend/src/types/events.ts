@@ -62,6 +62,16 @@ export type ChatEvent =
   | { type: "suggestion"; content: string; suggestion_id: string; skill_id?: string; suggestion_type?: string }
   | { type: "autonomous_action"; skill_id: string; reason: string; result: string }
   | {
+      type: "greeting";
+      content: string;
+      suggestions: Array<{ id: string; content: string; skill_id: string }>;
+      reminders: Array<{ what: string; when: string }>;
+      stats: { sessions: number; memories: number; days_together: number };
+      tokens_in: number;
+      tokens_out: number;
+      model: string;
+    }
+  | {
       type: "skill_question";
       task_id: string;
       skill_id: string;

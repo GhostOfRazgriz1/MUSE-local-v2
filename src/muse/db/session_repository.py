@@ -69,6 +69,17 @@ class SessionRepository:
         )
         await self._db.commit()
 
+    async def get_session_stats(self) -> dict:
+        """Return aggregate session stats: total count and first session date."""
+        cursor = await self._db.execute(
+            "SELECT COUNT(*), MIN(created_at) FROM sessions"
+        )
+        row = await cursor.fetchone()
+        return {
+            "session_count": row[0] or 0,
+            "first_session_at": row[1],
+        }
+
     async def delete_session(self, session_id: str) -> None:
         await self._db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         await self._db.commit()

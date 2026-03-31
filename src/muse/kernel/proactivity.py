@@ -535,8 +535,14 @@ class ProactivityManager:
 
     # ── Adaptive Greeting ───────────────────────────────────────
 
-    async def compose_greeting(self) -> str:
-        """LLM-compose an adaptive greeting from context.
+    async def compose_greeting(self) -> dict:
+        """Compose an adaptive greeting with structured context.
+
+        Returns a dict with:
+          - content: str — the LLM-generated greeting text
+          - suggestions: list[dict] — quick action chips (id, content, skill_id)
+          - reminders: list[dict] — pending reminders (what, when)
+          - stats: dict — relationship stats (sessions, memories, days_together)
 
         Falls back to static greeting + briefing on failure.
         When ``llm_greeting`` is disabled, always uses the static path.
@@ -554,15 +560,82 @@ class ProactivityManager:
 
         personality = self._orch._parse_identity_field("greeting") or ""
 
+        # ── Gather structured context (used by both paths) ──────────
+
+        # Pending reminders
+        reminders = []
+        try:
+            keys = await self._orch._memory_repo.list_keys("Reminders", prefix="reminder.")
+            for key in keys[:5]:
+                entry = await self._orch._memory_repo.get("Reminders", key)
+                if entry:
+                    try:
+                        data = json.loads(entry["value"])
+                        if data.get("status") == "active":
+                            reminders.append({
+                                "what": data.get("what", ""),
+                                "when": data.get("when", ""),
+                            })
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        except Exception as e:
+            logger.debug("Failed to fetch reminders for greeting: %s", e)
+
+        # Dreaming suggestions → quick action chips
+        suggestions = []
+        try:
+            entry = await self._orch._memory_repo.get("_patterns", "suggestions")
+            if entry and entry.get("value"):
+                raw = json.loads(entry["value"])
+                for s in raw[:3]:
+                    msg = s.get("message", "")
+                    if msg:
+                        suggestions.append({
+                            "id": f"gs_{uuid.uuid4().hex[:8]}",
+                            "content": msg,
+                            "skill_id": s.get("skill_id", ""),
+                        })
+                # Clear after reading
+                await self._orch._memory_repo.put(
+                    "_patterns", "suggestions", "[]", value_type="json",
+                )
+        except Exception as e:
+            logger.debug("Failed to fetch dreaming suggestions for greeting: %s", e)
+
+        # Relationship stats
+        stats = {"sessions": 0, "memories": 0, "days_together": 0}
+        try:
+            session_stats = await self._orch._session_repo.get_session_stats()
+            stats["sessions"] = session_stats["session_count"]
+            if session_stats["first_session_at"]:
+                first = datetime.fromisoformat(session_stats["first_session_at"])
+                now_utc = datetime.now(timezone.utc)
+                stats["days_together"] = max(1, (now_utc - first).days)
+        except Exception as e:
+            logger.debug("Failed to fetch session stats for greeting: %s", e)
+        try:
+            stats["memories"] = await self._orch._memory_repo.count_entries()
+        except Exception as e:
+            logger.debug("Failed to fetch memory count for greeting: %s", e)
+
+        # Helper to build the result dict
+        def _make_result(content: str) -> dict:
+            return {
+                "content": content,
+                "suggestions": suggestions,
+                "reminders": reminders,
+                "stats": stats,
+            }
+
         if not settings["llm_greeting"]:
-            # Static greeting — no LLM call
             static = personality or f"Hello{(', ' + user_name) if user_name else ''}!"
             briefing = await self._orch._build_briefing()
             if briefing:
-                return f"{static}\n\n{briefing}"
-            return static
+                return _make_result(f"{static}\n\n{briefing}")
+            return _make_result(static)
 
-        # Gather all context
+        # ── Gather LLM context ──────────────────────────────────────
+
         now = self._orch.user_now()
         hour = now.hour
 
@@ -577,10 +650,7 @@ class ProactivityManager:
         else:
             time_of_day = "night"
 
-        # Use 12-hour format to avoid LLM confusion about "00:04" being ambiguous
         time_str = now.strftime(f"%I:%M %p on %A, %B %d")
-
-        # Agent name from identity
         agent_name = self._orch._parse_identity_field("name") or "MUSE"
 
         # Scheduled task results
@@ -602,46 +672,13 @@ class ProactivityManager:
         except Exception as e:
             logger.debug("Failed to fetch scheduled results for greeting: %s", e)
 
-        # Pending reminders
-        reminder_parts = []
-        try:
-            keys = await self._orch._memory_repo.list_keys("Reminders", prefix="reminder.")
-            for key in keys[:5]:
-                entry = await self._orch._memory_repo.get("Reminders", key)
-                if entry:
-                    try:
-                        data = json.loads(entry["value"])
-                        if data.get("status") == "active":
-                            when = data.get("when", "unspecified")
-                            reminder_parts.append(
-                                f"Reminder: {data.get('what', '')} ({when})"
-                            )
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-        except Exception as e:
-            logger.debug("Failed to fetch reminders for greeting: %s", e)
-
-        # Dreaming suggestions
-        suggestion_parts = []
-        try:
-            entry = await self._orch._memory_repo.get("_patterns", "suggestions")
-            if entry and entry.get("value"):
-                suggestions = json.loads(entry["value"])
-                for s in suggestions[:3]:
-                    msg = s.get("message", "")
-                    if msg:
-                        suggestion_parts.append(msg)
-                # Clear after reading
-                await self._orch._memory_repo.put(
-                    "_patterns", "suggestions", "[]", value_type="json",
-                )
-        except Exception as e:
-            logger.debug("Failed to fetch dreaming suggestions for greeting: %s", e)
-
         # Pattern summary
         pattern_summary = self._orch._patterns.summarize_recent()
 
-        # Compose via LLM
+        # Build prompt context
+        reminder_parts = [f"Reminder: {r['what']} ({r['when']})" for r in reminders if r["what"]]
+        suggestion_parts = [s["content"] for s in suggestions]
+
         context_parts = []
         if briefing_parts:
             context_parts.append("Background updates:\n" + "\n".join(briefing_parts))
@@ -682,7 +719,7 @@ class ProactivityManager:
 
             greeting = result.text.strip()
             if greeting:
-                return greeting
+                return _make_result(greeting)
 
         except Exception as e:
             logger.warning("Adaptive greeting failed: %s", e)
@@ -691,5 +728,5 @@ class ProactivityManager:
         static = personality or f"Hello{(', ' + user_name) if user_name else ''}!"
         briefing = await self._orch._build_briefing()
         if briefing:
-            return f"{static}\n\n{briefing}"
-        return static
+            return _make_result(f"{static}\n\n{briefing}")
+        return _make_result(static)

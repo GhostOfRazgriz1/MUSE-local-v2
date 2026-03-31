@@ -93,6 +93,13 @@ class MemoryRepository:
             rows = await cursor.fetchall()
             return [r[0] for r in rows]
 
+    async def count_entries(self) -> int:
+        """Return total number of non-superseded memory entries."""
+        sql = "SELECT COUNT(*) FROM memory_entries WHERE superseded_by IS NULL"
+        async with self._db.execute(sql) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
     async def get_by_relevance(
         self,
         namespace: str = None,

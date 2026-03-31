@@ -5244,6 +5244,91 @@ textarea:focus-visible {
    PROACTIVITY UI
    ══════════════════════════════════════════════════════════════ */
 
+/* ── Greeting Card ── */
+.greeting-card {
+  padding: 16px 20px;
+  margin: var(--ui-msg-gap) 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-subtle);
+  border-radius: var(--radius-lg);
+  animation: msg-in 0.4s var(--ease-out);
+  max-width: 600px;
+}
+.greeting-card-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.greeting-card-header .msg-avatar {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.greeting-card-text {
+  flex: 1;
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+  line-height: 1.6;
+}
+.greeting-card-text p {
+  margin: 0;
+}
+.greeting-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.greeting-chip {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-subtle);
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.greeting-chip:hover {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+}
+.greeting-card-reminders {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.greeting-reminder-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.greeting-reminder-what {
+  color: var(--text-secondary);
+}
+.greeting-reminder-when {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+.greeting-reminder-when::before {
+  content: "·";
+  margin-right: 6px;
+}
+.greeting-card-stats {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  letter-spacing: 0.2px;
+}
+
 /* ── Suggestion Card ── */
 .suggestion-card {
   display: flex;

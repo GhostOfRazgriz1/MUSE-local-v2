@@ -714,13 +714,16 @@ class Orchestrator:
         # Reset proactivity session state for the new connection
         self._proactivity.reset_session()
 
-        # Compose adaptive greeting via LLM
-        content = await self._proactivity.compose_greeting()
+        # Compose adaptive greeting via LLM (returns structured data)
+        greeting_data = await self._proactivity.compose_greeting()
 
-        if content:
+        if greeting_data and greeting_data.get("content"):
             yield {
-                "type": "response",
-                "content": content,
+                "type": "greeting",
+                "content": greeting_data["content"],
+                "suggestions": greeting_data.get("suggestions", []),
+                "reminders": greeting_data.get("reminders", []),
+                "stats": greeting_data.get("stats", {}),
                 "tokens_in": 0,
                 "tokens_out": 0,
                 "model": "",

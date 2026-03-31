@@ -661,6 +661,60 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   );
                 }
 
+                case "greeting": {
+                  const gs = evt.suggestions || [];
+                  const gr = evt.reminders || [];
+                  const gst = evt.stats || { sessions: 0, memories: 0, days_together: 0 };
+                  const hasExtras = gs.length > 0 || gr.length > 0 || gst.sessions > 0;
+                  return wrapMsg(
+                    <div className="greeting-card">
+                      <div className="greeting-card-header">
+                        <div className="msg-avatar agent">
+                          <IconBot size={16} />
+                        </div>
+                        <div className="greeting-card-text">
+                          <MarkdownContent content={evt.content} />
+                        </div>
+                      </div>
+                      {gs.length > 0 && (
+                        <div className="greeting-card-chips">
+                          {gs.map((s) => (
+                            <button
+                              key={s.id}
+                              className="greeting-chip"
+                              onClick={() => {
+                                onSuggestionFeedback(s.id, true);
+                                onSend(s.content);
+                              }}
+                            >
+                              {s.content}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {gr.length > 0 && (
+                        <div className="greeting-card-reminders">
+                          {gr.map((r, ri) => (
+                            <div key={ri} className="greeting-reminder-item">
+                              <IconClock size={12} />
+                              <span className="greeting-reminder-what">{r.what}</span>
+                              {r.when && <span className="greeting-reminder-when">{r.when}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {hasExtras && gst.sessions > 0 && (
+                        <div className="greeting-card-stats">
+                          {gst.sessions} {gst.sessions === 1 ? "session" : "sessions"}
+                          {gst.memories > 0 && <> · {gst.memories} {gst.memories === 1 ? "memory" : "memories"}</>}
+                          {gst.days_together > 1 && <> · {gst.days_together} days</>}
+                          {gst.days_together <= 1 && gst.sessions <= 1 && <> · Just getting started</>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
                 case "task_started":
                   // Suppress individual start notifications when part of a
                   // multi-task — the multi_task_started bubble already shows
