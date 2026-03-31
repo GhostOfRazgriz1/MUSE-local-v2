@@ -740,6 +740,82 @@ textarea:focus-visible {
   box-shadow: var(--glow-sm) var(--accent-glow);
 }
 
+/* Agent mood status text in topbar */
+.topbar-mood {
+  font-size: var(--fs-2xs);
+  color: var(--text-muted);
+  font-weight: 400;
+  font-style: italic;
+  animation: mood-text-in 0.3s var(--ease-out);
+}
+@keyframes mood-text-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.mood-text-thinking,
+.mood-text-working { color: var(--accent); }
+.mood-text-dreaming { color: var(--text-muted); opacity: 0.7; }
+.mood-text-excited { color: #f59e0b; }
+.mood-text-curious { color: #8b5cf6; }
+.mood-text-amused { color: #10b981; }
+.mood-text-concerned { color: #6366f1; }
+
+/* ── Agent mood visual states ─────────────────────────────
+   Applied to .topbar-logo-icon and .msg-avatar via mood-X class.
+   Each mood gets a subtle color shift and/or animation. */
+
+.mood-neutral {
+  transition: box-shadow 0.4s, background 0.4s;
+}
+.mood-thinking {
+  animation: mood-pulse 1.2s ease-in-out infinite;
+}
+@keyframes mood-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.6; }
+}
+.mood-working {
+  animation: mood-spin-glow 2s linear infinite;
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+@keyframes mood-spin-glow {
+  0%   { box-shadow: 0 0 4px var(--accent-glow); }
+  50%  { box-shadow: 0 0 10px var(--accent-glow); }
+  100% { box-shadow: 0 0 4px var(--accent-glow); }
+}
+.mood-excited {
+  background: #f59e0b !important;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+  transition: background 0.4s, box-shadow 0.4s;
+}
+.mood-curious {
+  background: #8b5cf6 !important;
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.4);
+  transition: background 0.4s, box-shadow 0.4s;
+}
+.mood-amused {
+  background: #10b981 !important;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+  transition: background 0.4s, box-shadow 0.4s;
+}
+.mood-concerned {
+  background: #6366f1 !important;
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.4);
+  transition: background 0.4s, box-shadow 0.4s;
+}
+.mood-dreaming {
+  animation: mood-breathe 3s ease-in-out infinite;
+  opacity: 0.7;
+}
+@keyframes mood-breathe {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50%      { opacity: 0.8; transform: scale(1.03); }
+}
+.mood-resting {
+  opacity: 0.6;
+  transition: opacity 0.6s;
+}
+
 .topbar-title {
   font-size: var(--fs-xl);
   font-weight: 600;

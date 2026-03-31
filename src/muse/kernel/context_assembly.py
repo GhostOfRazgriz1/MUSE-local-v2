@@ -90,6 +90,14 @@ class AssembledContext:
         if self.emotional_context:
             system_parts.append(f"\n{self.emotional_context}")
 
+        # Mood tag hint — lets the LLM set the agent's visible mood.
+        system_parts.append(
+            "\nYou may optionally end your response with [mood:X] where X is "
+            "one of: curious, amused, excited, concerned, neutral. "
+            "This sets your visible mood indicator. Only use this when the "
+            "mood is clearly appropriate — don't force it on every response."
+        )
+
         messages.append({"role": "system", "content": "\n".join(system_parts)})
 
         # Inject conversation history before the current instruction

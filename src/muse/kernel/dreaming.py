@@ -92,6 +92,7 @@ class DreamingManager:
                                turns=len(history),
                                idle_seconds=round(elapsed))
 
+            await self._orch.set_mood("dreaming", force=True)
             try:
                 # Flush usage patterns to disk before consolidation
                 await self._orch._patterns.flush()
@@ -102,6 +103,8 @@ class DreamingManager:
             except Exception as e:
                 logger.error("Memory consolidation failed: %s", e, exc_info=True)
                 get_tracer().error("dreaming", f"Consolidation failed: {e}")
+            finally:
+                await self._orch.set_mood("resting", force=True)
 
     async def _consolidate(
         self, session_id: str, history: list[dict],

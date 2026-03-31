@@ -86,6 +86,7 @@ export type ChatEvent =
       message: string;
       request_id: string;
     }
+  | { type: "mood_changed"; mood: string }
   | { type: "permission_approved"; request_id: string }
   | { type: "permission_denied"; request_id: string }
   | { type: "skill_notify"; task_id: string; skill_id: string; message: string }

@@ -30,6 +30,8 @@ function App() {
   const [fileBrowserOpen, setFileBrowserOpen] = useState(false);
   const [memoryPanelOpen, setMemoryPanelOpen] = useState(false);
   const [sessionTitle, setSessionTitle] = useState("");
+  const [agentMood, setAgentMood] = useState("resting");
+  const moodDecayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const taskBtnRef = useRef<HTMLButtonElement>(null);
 
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
@@ -64,6 +66,17 @@ function App() {
     if (last && last.type === "session_updated") {
       setSessionUpdateTrigger((n) => n + 1);
       setSessionTitle(last.title);
+    }
+    // Agent mood tracking with decay
+    if (last && last.type === "mood_changed") {
+      setAgentMood(last.mood);
+      // Clear previous decay timer
+      if (moodDecayRef.current) clearTimeout(moodDecayRef.current);
+      // Ambient moods (resting, dreaming) don't decay. Others revert to neutral after 60s.
+      const persistent = new Set(["resting", "dreaming", "neutral", "working"]);
+      if (!persistent.has(last.mood)) {
+        moodDecayRef.current = setTimeout(() => setAgentMood("neutral"), 60_000);
+      }
     }
   }, [events]);
 
@@ -238,10 +251,18 @@ function App() {
             <IconMenu size={18} />
           </button>
           <div className="topbar-logo">
-            <div className="topbar-logo-icon">
+            <div className={`topbar-logo-icon mood-${agentMood}`}>
               <IconBot size={16} />
             </div>
             <span className="topbar-title">MUSE</span>
+            {agentMood !== "neutral" && agentMood !== "resting" && (
+              <span className={`topbar-mood mood-text-${agentMood}`}>
+                {agentMood === "thinking" ? "thinking..." :
+                 agentMood === "working" ? "working..." :
+                 agentMood === "dreaming" ? "dreaming..." :
+                 agentMood}
+              </span>
+            )}
           </div>
           {sessionTitle && view === "chat" && (
             <>
@@ -326,6 +347,7 @@ function App() {
           <ChatStream
             events={events}
             connected={connected}
+            agentMood={agentMood}
             onSend={sendMessage}
             onPermissionRespond={handlePermissionRespond}
             onUserResponse={(requestId, response) => {

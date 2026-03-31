@@ -90,6 +90,22 @@ def sanitize_response(text: str) -> str:
     return text.strip()
 
 
+_VALID_MOODS = {"curious", "amused", "excited", "concerned", "neutral"}
+_MOOD_TAG_RE = re.compile(r"\[mood:(\w+)\]\s*$")
+
+
+def extract_mood_tag(text: str) -> tuple[str, str | None]:
+    """Strip a ``[mood:X]`` tag from the end of a response.
+
+    Returns ``(cleaned_text, mood_or_None)``.  If no valid tag is found
+    the original text is returned unchanged with ``None``.
+    """
+    m = _MOOD_TAG_RE.search(text)
+    if m and m.group(1).lower() in _VALID_MOODS:
+        return text[:m.start()].rstrip(), m.group(1).lower()
+    return text, None
+
+
 class Orchestrator:
     """The persistent agent loop — heart of MUSE.
 
@@ -207,6 +223,15 @@ class Orchestrator:
         # Emotion tracking and relationship progression
         from muse.kernel.emotions import EmotionTracker
         self._emotions = EmotionTracker(memory_repo, self._session_repo)
+
+        # Agent mood — visible state surfaced in the UI.
+        # Hierarchy: working > dreaming > LLM-picked/emotion > thinking > neutral > resting
+        self._mood: str = "resting"
+        self._mood_priority: dict[str, int] = {
+            "resting": 0, "neutral": 1, "thinking": 2,
+            "curious": 3, "amused": 3, "excited": 3, "concerned": 3,
+            "working": 4, "dreaming": 4,
+        }
 
         # Skill execution hooks (before/after interception)
         from muse.kernel.hooks import HookRegistry
@@ -568,6 +593,7 @@ class Orchestrator:
         self._compaction.reset(session["id"])
         self._permissions.set_session(session["id"])
         self._emotions.reset_session()
+        self._mood = "resting"
         return session
 
     async def ensure_session(self) -> str:
@@ -723,6 +749,7 @@ class Orchestrator:
         greeting_data = await self._proactivity.compose_greeting()
 
         if greeting_data and greeting_data.get("content"):
+            await self.set_mood("neutral", force=True)
             yield {
                 "type": "greeting",
                 "content": greeting_data["content"],
@@ -858,12 +885,29 @@ class Orchestrator:
         asyncio.create_task(self._persist_message_and_title(user_message))
 
         # Lightweight emotion analysis (no LLM call — just pattern matching)
+        # Also sets the agent's visible mood based on the user's emotional signal.
         try:
             signal = self._emotions.analyze_message(user_message)
             if signal:
                 asyncio.create_task(self._emotions.persist_signal(signal))
+                # Map user emotion → agent mood
+                _EMOTION_TO_MOOD = {
+                    "excitement": "excited", "accomplishment": "excited",
+                    "gratitude": "excited",
+                    "frustration": "concerned", "stress": "concerned",
+                    "anxiety": "concerned", "sadness": "concerned",
+                    "curiosity": "curious",
+                }
+                agent_mood = _EMOTION_TO_MOOD.get(signal.emotion)
+                if agent_mood:
+                    await self.set_mood(agent_mood, force=True)
+                else:
+                    await self.set_mood("neutral", force=True)
+            else:
+                await self.set_mood("thinking", force=True)
         except Exception as e:
             logger.debug("Emotion analysis skipped: %s", e)
+            await self.set_mood("thinking", force=True)
 
         try:
             _t = get_tracer()
@@ -899,6 +943,12 @@ class Orchestrator:
             if intent.skill_id and not intent.skill_id.startswith("mcp:"):
                 intent = await self._apply_skill_preference(intent)
 
+            # Pre-compute embedding for delegated tasks so it can be reused
+            # after permission approval without a redundant inference call.
+            precomputed_embedding = None
+            if intent.mode in (ExecutionMode.DELEGATED, ExecutionMode.MULTI_DELEGATED):
+                precomputed_embedding = await self._embeddings.embed_async(user_message)
+
             if intent.mode == ExecutionMode.INLINE:
                 await self._patterns.record("inline", instruction=user_message)
                 async for event in self._handle_inline(user_message, intent, history_snapshot):
@@ -914,7 +964,10 @@ class Orchestrator:
                         action=intent.action, instruction=user_message,
                     )
                     self._last_delegated_message = user_message
-                    async for event in self._handle_delegated(user_message, intent, history_snapshot):
+                    async for event in self._handle_delegated(
+                        user_message, intent, history_snapshot,
+                        precomputed_embedding=precomputed_embedding,
+                    ):
                         yield event
             elif intent.mode == ExecutionMode.MULTI_DELEGATED:
                 await self._patterns.record(
@@ -1038,6 +1091,13 @@ class Orchestrator:
 
         response_text = sanitize_response("".join(response_chunks))
 
+        # Extract and apply LLM-picked mood tag (e.g. [mood:curious])
+        response_text, llm_mood = extract_mood_tag(response_text)
+        if llm_mood:
+            await self.set_mood(llm_mood, force=True)
+        elif self._mood == "thinking":
+            await self.set_mood("neutral", force=True)
+
         self.track_llm_usage(tokens_in, tokens_out)
         _t = get_tracer()
         _t.llm_call("inline_response", model,
@@ -1140,6 +1200,7 @@ class Orchestrator:
         self, user_message: str, intent,
         history_snapshot: list[dict] | None = None,
         skip_permission_check: bool = False,
+        precomputed_embedding: list[float] | None = None,
     ) -> AsyncIterator[dict]:
         """Delegate to a single skill via task spawning."""
         skill_id = intent.skill_id
@@ -1187,6 +1248,7 @@ class Orchestrator:
                     "skill_id": skill_id,
                     "all_request_ids": request_ids,
                     "intent": intent,
+                    "precomputed_embedding": precomputed_embedding,
                 }
             return
 
@@ -1197,6 +1259,7 @@ class Orchestrator:
             intent=intent,
             action=intent.action,
             history_snapshot=history_snapshot,
+            precomputed_embedding=precomputed_embedding,
         ):
             yield event
 
@@ -2007,6 +2070,7 @@ class Orchestrator:
         history_snapshot: list[dict] | None = None,
         _invoke_depth: int = 0,
         _invoke_chain: list[str] | None = None,
+        precomputed_embedding: list[float] | None = None,
     ) -> AsyncIterator[dict]:
         """Execute a single skill as a sub-task. Yields events.
 
@@ -2018,14 +2082,19 @@ class Orchestrator:
             yield {"type": "error", "content": f"Skill '{skill_id}' not found."}
             return
 
-        # Collect granted permissions (already checked by caller)
-        granted_perms = []
-        for perm in manifest.permissions:
-            check = await self._permissions.check_permission(skill_id, perm)
-            if check.allowed:
-                granted_perms.append(perm)
+        # Collect granted permissions — skip the per-perm DB query when
+        # we already know they're all granted (e.g. after permission approval).
+        if precomputed_embedding is not None:
+            # Caller already checked permissions; just use the manifest list.
+            granted_perms = list(manifest.permissions)
+        else:
+            granted_perms = []
+            for perm in manifest.permissions:
+                check = await self._permissions.check_permission(skill_id, perm)
+                if check.allowed:
+                    granted_perms.append(perm)
 
-        query_embedding = await self._embeddings.embed_async(instruction)
+        query_embedding = precomputed_embedding or await self._embeddings.embed_async(instruction)
 
         # Promote from disk → cache
         await self._promotion.promote_disk_to_cache(
@@ -2123,6 +2192,7 @@ class Orchestrator:
             "skill_name": manifest.name,
             "message": f"Working on your request using {manifest.name}...",
         }
+        await self.set_mood("working", force=True)
 
         # ── Before-hook ────────────────────────────────────────
         from muse.kernel.hooks import HookContext
@@ -2252,6 +2322,7 @@ class Orchestrator:
                     tokens_in=completed_task.tokens_in,
                     tokens_out=completed_task.tokens_out,
                 ))
+                await self.set_mood("neutral", force=True)
             else:
                 error_msg = completed_task.error if completed_task else "Task failed"
                 _t.task_complete(task.id, skill_id, "failed", error=error_msg)
@@ -2260,6 +2331,7 @@ class Orchestrator:
                     "task_id": task.id,
                     "error": error_msg,
                 }
+                await self.set_mood("neutral", force=True)
 
         except asyncio.TimeoutError:
             _t.task_complete(task.id, skill_id, "timeout")
@@ -2380,6 +2452,8 @@ class Orchestrator:
         """
         user_message = pending["message"]
 
+        cached_emb = pending.get("precomputed_embedding")
+
         if pending.get("is_multi_task") and pending.get("intent"):
             async for event in self._handle_multi_delegated(
                 user_message, pending["intent"],
@@ -2388,6 +2462,7 @@ class Orchestrator:
         elif pending.get("intent"):
             async for event in self._handle_delegated(
                 user_message, pending["intent"], skip_permission_check=True,
+                precomputed_embedding=cached_emb,
             ):
                 yield event
         else:
@@ -2479,6 +2554,23 @@ class Orchestrator:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
                 pass  # Drop event rather than block other subscribers
+
+    async def set_mood(self, mood: str, force: bool = False) -> None:
+        """Set the agent's visible mood and broadcast to connected clients.
+
+        Deduplicates: no event is emitted if the mood hasn't changed.
+        If *force* is False, a lower-priority mood won't override a
+        higher-priority one (e.g. 'neutral' won't replace 'working').
+        """
+        if mood == self._mood:
+            return
+        if not force:
+            current_pri = self._mood_priority.get(self._mood, 1)
+            new_pri = self._mood_priority.get(mood, 1)
+            if new_pri < current_pri and self._mood in ("working", "dreaming"):
+                return  # Don't downgrade from working/dreaming unless forced
+        self._mood = mood
+        await self._emit_event({"type": "mood_changed", "mood": mood})
 
     # ------------------------------------------------------------------
     # Conversation context for skills

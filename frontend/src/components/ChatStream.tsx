@@ -8,6 +8,7 @@ import type { ChatEvent, DisplayMessage, ApprovalMode } from "../types/events";
 interface ChatStreamProps {
   events: ChatEvent[];
   connected: boolean;
+  agentMood?: string;
   onSend: (content: string) => void;
   onPermissionRespond: (requestId: string, allow: boolean, mode?: ApprovalMode) => void;
   onUserResponse: (requestId: string, response: unknown) => void;
@@ -227,6 +228,7 @@ function processChildren(children: React.ReactNode): React.ReactNode {
 export const ChatStream: React.FC<ChatStreamProps> = ({
   events,
   connected,
+  agentMood = "neutral",
   onSend,
   onPermissionRespond,
   onUserResponse,
@@ -324,7 +326,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
           }
         }
 
-        if (evt.type === "task_started") {
+        if (evt.type === "task_started" && !("sub_task_index" in evt)) {
           setActiveSkills((prev) => [
             ...prev,
             { skill: evt.skill_name, taskId: evt.task_id },
@@ -466,6 +468,18 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
       }
     }
 
+    // Auto-dismiss any visible suggestions — the user chose to type
+    // instead of clicking, so the suggestions are stale.
+    setDismissedSuggestions((prev) => {
+      const next = new Set(prev);
+      for (const m of messages) {
+        if ("type" in m && m.type === "suggestion" && "suggestion_id" in m) {
+          next.add(m.suggestion_id);
+        }
+      }
+      return next;
+    });
+
     const id = ++msgIdRef.current;
     setMessages((prev) => [...prev, { role: "user" as const, content: messageText, _id: id }]);
     onSend(messageText);
@@ -589,8 +603,11 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   dateSep = <div className="date-separator"><span>{label}</span></div>;
                 }
               }
-              // First message with no date info — show "Today" for live sessions
-              if (i === 0 && !dateSep && !createdAt) {
+              // First message with no date info — show "Today" only for
+              // genuinely new sessions (no history loaded).  For resumed
+              // sessions the first history message will have _createdAt and
+              // supply its own separator with the correct date.
+              if (i === 0 && !dateSep && !createdAt && messages.every((m) => !("_createdAt" in m))) {
                 dateSep = <div className="date-separator"><span>Today</span></div>;
               }
               // Render helper — wraps any message element with a date separator if needed
@@ -612,7 +629,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                 case "response_chunk":
                   return wrapMsg(
                     <div className="msg-row agent">
-                      <div className="msg-avatar agent streaming">
+                      <div className={`msg-avatar agent streaming mood-${agentMood}`}>
                         <IconBot size={16} />
                       </div>
                       <div className="msg-bubble agent">
@@ -625,7 +642,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   const fileInfo = parseFileCard(evt.content);
                   return wrapMsg(
                     <div className="msg-row agent">
-                      <div className="msg-avatar agent">
+                      <div className={`msg-avatar agent mood-${agentMood}`}>
                         <IconBot size={16} />
                       </div>
                       <div className="msg-bubble agent">

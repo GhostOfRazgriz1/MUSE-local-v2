@@ -615,7 +615,21 @@ class ProactivityManager:
         except Exception as e:
             logger.debug("Failed to fetch session stats for greeting: %s", e)
         try:
-            stats["memories"] = await self._orch._memory_repo.count_entries()
+            # Count only consumer-visible entries so the number matches
+            # what the Memory panel actually shows (same filtering as the
+            # /api/memories endpoint).
+            _consumer_ns = ("_profile", "_facts", "_project", "_conversation", "_emotions")
+            visible_count = 0
+            for ns in _consumer_ns:
+                entries = await self._orch._memory_repo.get_by_relevance(
+                    namespace=ns, limit=500, min_score=0.0,
+                )
+                for e in entries:
+                    val = (e.get("value") or "").strip()
+                    if val.startswith(("{", "[", '"{')) or "failed LLM review" in val:
+                        continue
+                    visible_count += 1
+            stats["memories"] = visible_count
         except Exception as e:
             logger.debug("Failed to fetch memory count for greeting: %s", e)
         try:
