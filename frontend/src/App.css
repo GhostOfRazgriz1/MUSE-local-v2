@@ -1517,6 +1517,27 @@ textarea:focus-visible {
 .msg-row.user:hover .msg-fork-btn.user { opacity: 0.6; }
 .msg-fork-btn.user:hover { opacity: 1 !important; color: var(--accent); }
 
+/* ── Regenerate Button ── */
+.msg-regenerate-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: all var(--transition-fast);
+}
+.msg-bubble.agent:hover .msg-regenerate-btn { opacity: 1; }
+.msg-regenerate-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
 /* ── Steering Bar ── */
 .steering-bar {
   display: flex;

@@ -323,6 +323,19 @@ function App() {
             }}
             onSteer={(content) => sendRaw({ type: "steer", content })}
             onFork={handleFork}
+            onRegenerate={() => {
+              // Remove the last assistant message so the new response replaces it
+              setMessages((prev) => {
+                for (let i = prev.length - 1; i >= 0; i--) {
+                  const msg = prev[i];
+                  if ("type" in msg && (msg.type === "response" || msg.type === "response_chunk")) {
+                    return [...prev.slice(0, i)];
+                  }
+                }
+                return prev;
+              });
+              sendRaw({ type: "regenerate" });
+            }}
             onUpload={handleUpload}
             onSuggestionFeedback={(sid, accepted) => {
               sendRaw({ type: "suggestion_feedback", suggestion_id: sid, accepted });

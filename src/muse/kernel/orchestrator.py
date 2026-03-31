@@ -227,6 +227,9 @@ class Orchestrator:
         logger.info("Orchestrator starting...")
         self._running = True
 
+        # Backup database on startup
+        self._backup_database()
+
         # Recover from any previous crash
         uncommitted = await self._wal.get_uncommitted()
         if uncommitted:
@@ -398,6 +401,18 @@ class Orchestrator:
         await self._wal.compact()
         logger.info("Orchestrator stopped.")
 
+    def _backup_database(self) -> None:
+        """Create a rolling backup of agent.db on startup."""
+        import shutil
+        db_path = self._config.db_path
+        backup_path = db_path.with_suffix(".db.bak")
+        if db_path.exists():
+            try:
+                shutil.copy2(str(db_path), str(backup_path))
+                logger.info("Database backed up to %s", backup_path)
+            except Exception as e:
+                logger.warning("Database backup failed: %s", e)
+
     # ------------------------------------------------------------------
     # Session management
     # ------------------------------------------------------------------
@@ -409,6 +424,13 @@ class Orchestrator:
     @property
     def demotion(self):
         return self._demotion
+
+    def get_last_user_message(self) -> str | None:
+        """Return the most recent user message from conversation history."""
+        for msg in reversed(self._conversation_history):
+            if msg.get("role") == "user":
+                return msg["content"]
+        return None
 
     def track_llm_usage(self, tokens_in: int, tokens_out: int) -> None:
         """Record an LLM call for rate tracking."""

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { IconSend, IconBot, IconShield, IconAlertCircle, IconCopy, IconClipboardCheck, IconCheck, IconChevronDown, IconGitBranch, IconNavigation, IconClock, IconPaperclip, IconFileText, IconDownload, IconX } from "./Icons";
+import { IconSend, IconBot, IconShield, IconAlertCircle, IconCopy, IconClipboardCheck, IconCheck, IconChevronDown, IconGitBranch, IconNavigation, IconClock, IconPaperclip, IconFileText, IconDownload, IconX, IconRefresh } from "./Icons";
 import { renderWithFileChips } from "./FileChip";
 import type { ChatEvent, DisplayMessage, ApprovalMode } from "../types/events";
 
@@ -15,6 +15,7 @@ interface ChatStreamProps {
   onFork: (messageId: number) => void;
   onUpload: (file: File) => Promise<{ path: string; filename: string }>;
   onSuggestionFeedback: (suggestionId: string, accepted: boolean) => void;
+  onRegenerate: () => void;
   messages: DisplayMessage[];
   setMessages: React.Dispatch<React.SetStateAction<DisplayMessage[]>>;
 }
@@ -232,6 +233,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   onFork,
   onUpload,
   onSuggestionFeedback,
+  onRegenerate,
   messages,
   setMessages,
 }) => {
@@ -632,6 +634,17 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                         <div className="msg-footer">
                           {evt.model && <span className="msg-model">{evt.model}</span>}
                           {!fileInfo && <CopyButton text={evt.content} className="msg-copy-btn" label="Copy message" />}
+                          {/* Regenerate — only on the last assistant response */}
+                          {i === messages.length - 1 && (
+                            <button
+                              className="msg-regenerate-btn"
+                              onClick={onRegenerate}
+                              title="Regenerate response"
+                              aria-label="Regenerate response"
+                            >
+                              <IconRefresh size={13} />
+                            </button>
+                          )}
                           {(evt as any)._dbId != null && (
                             <button
                               className="msg-fork-btn"

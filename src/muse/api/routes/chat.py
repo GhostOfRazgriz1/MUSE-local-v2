@@ -233,6 +233,17 @@ async def chat_websocket(
                 active_msg_tasks.add(task)
                 task.add_done_callback(active_msg_tasks.discard)
 
+            elif msg_type == "regenerate":
+                # Re-process the last user message for a fresh response
+                last_user_msg = orchestrator.get_last_user_message()
+                if last_user_msg:
+                    await _ensure_session()
+                    task = asyncio.create_task(
+                        _stream_to_ws(orchestrator.handle_message(last_user_msg))
+                    )
+                    active_msg_tasks.add(task)
+                    task.add_done_callback(active_msg_tasks.discard)
+
             elif msg_type == "approve_permission":
                 await _ensure_session()
                 await websocket.send_json({
