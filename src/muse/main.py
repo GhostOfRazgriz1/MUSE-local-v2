@@ -106,6 +106,35 @@ async def create_orchestrator(config: Config | None = None):
             )
         logger.info("Loaded %s key from vault", prefix)
 
+    # Register custom providers from user_settings.
+    try:
+        import json as _json
+        async with db.execute(
+            "SELECT value FROM user_settings WHERE key = 'custom_providers'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row:
+            custom_providers = _json.loads(row[0])
+            for cp in custom_providers:
+                cp_id = cp["id"]
+                stored_key = await credential_vault.retrieve(f"{cp_id}_api_key")
+                if not stored_key:
+                    continue
+                if cp.get("api_style") == "anthropic":
+                    registry.register(cp_id, AnthropicProvider(api_key=stored_key))
+                else:
+                    registry.register(
+                        cp_id,
+                        OpenAICompatibleProvider(
+                            name=cp["name"],
+                            api_key=stored_key,
+                            base_url=cp["base_url"],
+                        ),
+                    )
+                logger.info("Loaded custom provider '%s' from vault", cp_id)
+    except Exception as e:
+        logger.debug("Custom provider loading skipped: %s", e)
+
     provider = registry
     model_router = ModelRouter(provider, db, config.default_model)
 

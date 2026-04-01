@@ -85,6 +85,11 @@ class ProactivityManager:
         self._idle_task: asyncio.Task | None = None
         self._auto_task: asyncio.Task | None = None
 
+        # Greeting cache — skip LLM call on quick reconnects
+        self._cached_greeting: dict | None = None
+        self._greeting_cached_at: float = 0.0
+        self._greeting_cache_ttl: float = 300.0  # 5 minutes
+
     # ── Lifecycle ───────────────────────────────────────────────
 
     def start(self) -> None:
@@ -564,7 +569,21 @@ class ProactivityManager:
 
         Falls back to static greeting + briefing on failure.
         When ``llm_greeting`` is disabled, always uses the static path.
+
+        Results are cached for ``_greeting_cache_ttl`` seconds so quick
+        reconnects (tab switch, page refresh) skip the LLM call entirely.
         """
+        # Return cached greeting if fresh enough
+        import time as _time
+        now_mono = _time.monotonic()
+        if (
+            self._cached_greeting
+            and (now_mono - self._greeting_cached_at) < self._greeting_cache_ttl
+        ):
+            logger.debug("Returning cached greeting (%.0fs old)",
+                         now_mono - self._greeting_cached_at)
+            return self._cached_greeting
+
         settings = await self.get_settings()
         personality = self._orch._parse_identity_field("greeting") or ""
         repo = self._orch._memory_repo
@@ -675,12 +694,16 @@ class ProactivityManager:
 
         # Helper to build the result dict
         def _make_result(content: str) -> dict:
-            return {
+            result = {
                 "content": content,
                 "suggestions": suggestions,
                 "reminders": reminders,
                 "stats": stats,
             }
+            # Cache for quick reconnects
+            self._cached_greeting = result
+            self._greeting_cached_at = now_mono
+            return result
 
         if not settings["llm_greeting"]:
             static = personality or f"Hello{(', ' + user_name) if user_name else ''}!"

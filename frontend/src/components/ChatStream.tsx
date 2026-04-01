@@ -529,6 +529,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
     const id = ++msgIdRef.current;
     setMessages((prev) => [...prev, { role: "user" as const, content: messageText, _id: id }]);
     onSend(messageText);
+    setIsThinking(true);  // Show thinking bubble instantly — don't wait for server event
     setInput("");
     resetTextarea();
   };

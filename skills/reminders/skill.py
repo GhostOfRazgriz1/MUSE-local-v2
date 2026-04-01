@@ -6,6 +6,31 @@ import json
 from datetime import datetime, timezone
 
 
+def _friendly_when(when: str) -> str:
+    """Convert an ISO 8601 timestamp to a human-friendly string."""
+    if not when or when == "unspecified":
+        return ""
+    try:
+        dt = datetime.fromisoformat(when)
+        now = datetime.now(timezone.utc)
+        diff = dt - now
+        # Past
+        if diff.total_seconds() < 0:
+            return dt.strftime("%b %d at %I:%M %p")
+        # Within the next hour
+        mins = int(diff.total_seconds() / 60)
+        if mins < 60:
+            return f"in {mins} minute{'s' if mins != 1 else ''}"
+        # Within today
+        hours = int(diff.total_seconds() / 3600)
+        if hours < 24:
+            return f"in {hours} hour{'s' if hours != 1 else ''}"
+        # Further out — show the date
+        return dt.strftime("%b %d at %I:%M %p")
+    except (ValueError, TypeError):
+        return when
+
+
 async def run(ctx) -> dict:
     """Entry point for the Reminders skill."""
     instruction = ctx.brief.get("instruction", "")
@@ -54,7 +79,8 @@ async def _set_reminder(ctx, instruction: str) -> dict:
 
     await ctx.memory.write(key, reminder, value_type="json")
 
-    time_str = f" for {when}" if when != "unspecified" else ""
+    friendly = _friendly_when(when)
+    time_str = f" ({friendly})" if friendly else ""
     return {
         "payload": {"key": key, "what": what, "when": when},
         "summary": f"Reminder set{time_str}: \"{what}\"",
@@ -93,8 +119,8 @@ async def _list_reminders(ctx) -> dict:
 
     lines = []
     for r in reminders:
-        when = r.get("when", "unspecified")
-        time_str = f" ({when})" if when != "unspecified" else ""
+        friendly = _friendly_when(r.get("when", ""))
+        time_str = f" ({friendly})" if friendly else ""
         lines.append(f"- {r.get('what', 'Unknown')}{time_str}")
 
     return {

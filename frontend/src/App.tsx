@@ -22,8 +22,10 @@ function App() {
   const [sessionUpdateTrigger, setSessionUpdateTrigger] = useState(0);
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null); // null = loading
 
-  const { sendMessage, sendRaw, connected, events, sessionId, historyMessages } =
-    useWebSocket(requestedSessionId, reconnectToken, needsSetup !== false);
+  // Connect WebSocket immediately — don't wait for the provider check.
+  // The greeting will still arrive while the setup card renders if needed.
+  const { sendMessage, sendRaw, connected, events, sessionId, historyMessages, backgroundNotifications, clearBackgroundNotification } =
+    useWebSocket(requestedSessionId, reconnectToken, needsSetup === true);
   const [view, setView] = useState<View>("chat");
   const [sidebarOpen, setSidebarOpen] = useState(true); // open by default on desktop
   const [taskPopoverOpen, setTaskPopoverOpen] = useState(false);
@@ -395,6 +397,33 @@ function App() {
         )}
       </div>
       </ErrorBoundary>
+
+      {/* Background session notifications */}
+      {backgroundNotifications.length > 0 && (
+        <div className="bg-notifications">
+          {backgroundNotifications.map((n) => (
+            <button
+              key={n.sessionId}
+              className="bg-notification-toast"
+              onClick={() => {
+                clearBackgroundNotification(n.sessionId);
+                handleSelectSession(n.sessionId);
+              }}
+            >
+              <div className="bg-notification-text">
+                <span className="bg-notification-label">Session ready</span>
+                <span className="bg-notification-summary">{n.summary}</span>
+              </div>
+              <span
+                className="bg-notification-dismiss"
+                onClick={(e) => { e.stopPropagation(); clearBackgroundNotification(n.sessionId); }}
+              >
+                &times;
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

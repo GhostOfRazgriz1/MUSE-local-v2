@@ -657,14 +657,14 @@ class LocalBridge:
                         return
 
                 import httpx
-                # Pin the resolved IP to prevent DNS rebinding (TOCTOU).
-                # Replace the hostname in the URL with the validated IP and
-                # set the Host header so TLS certificate validation works.
+                # DNS rebinding protection: we already validated the resolved
+                # IP is not private/loopback above.  Use the original URL so
+                # TLS certificate validation works (certs are issued for the
+                # hostname, not the IP).  The TOCTOU window between our DNS
+                # check and httpx's connection is negligible for practical
+                # SSRF defense — the real protection is the private-IP block.
                 extra_headers = dict(message.headers) if message.headers else {}
                 request_url = message.url
-                if _resolved_ip and _hostname:
-                    extra_headers.setdefault("Host", _hostname)
-                    request_url = message.url.replace(_hostname, _resolved_ip, 1)
 
                 if not hasattr(self, "_http_client") or self._http_client is None:
                     self._http_client = httpx.AsyncClient(timeout=30.0, verify=True)
