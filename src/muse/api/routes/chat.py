@@ -148,6 +148,14 @@ async def chat_websocket(
         try:
             while True:
                 event = await event_queue.get()
+                # Filter: only forward events for this session (or untagged events
+                # like mood_changed which are global).
+                event_sid = event.get("_session_id") if isinstance(event, dict) else None
+                if event_sid and event_sid != session_id:
+                    continue  # Not for this session — skip
+                # Strip the internal tag before sending to the client
+                if isinstance(event, dict):
+                    event.pop("_session_id", None)
                 await websocket.send_json(event)
         except Exception as e:
             logger.debug("Event forward loop ended: %s", e)
@@ -234,39 +242,10 @@ async def chat_websocket(
 
     reader_task = asyncio.create_task(ws_reader())
 
-    # Track background message tasks so we can cancel on disconnect
-    active_msg_tasks: set[asyncio.Task] = set()
-
-    _ws_closed = False
-
-    async def _stream_to_ws(gen):
-        """Consume an async generator and send events to the WebSocket.
-
-        If the WS disconnects mid-stream, the generator keeps running
-        so the orchestrator can persist results to the DB. Events are
-        silently consumed without sending to the dead WS.
-        """
-        nonlocal _ws_closed
-        _t = get_tracer()
-        try:
-            async for event in gen:
-                if _ws_closed:
-                    continue
-                try:
-                    _t.ws_send(event)
-                    await websocket.send_json(event)
-                except Exception:
-                    # WS send failed (disconnect race) — switch to drain
-                    # mode so the generator finishes its work.
-                    _ws_closed = True
-                    logger.debug("WS send failed, draining generator in background")
-                    continue
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            # Generator itself threw — log but don't crash.
-            # Results up to this point should already be persisted.
-            logger.warning("Generator error in _stream_to_ws: %s", e)
+    # Tasks run on the orchestrator (via run_in_background), NOT on the
+    # WS handler.  This means they survive WebSocket disconnects — if the
+    # user switches sessions, the task keeps running and persists results.
+    # The WS handler just forwards events from the event queue.
 
     try:
         while True:
@@ -288,24 +267,22 @@ async def chat_websocket(
                     })
                     continue
                 await _ensure_session()
-                # Run each message as an independent task so the user
-                # can send new messages while skills are still running.
-                task = asyncio.create_task(
-                    _stream_to_ws(orchestrator.handle_message(content))
+                # Pass session_id into handle_message so it's captured
+                # BEFORE the generator starts (immune to session switches).
+                # Also pass to run_in_background for event tagging.
+                orchestrator.run_in_background(
+                    orchestrator.handle_message(content, session_id=session_id),
+                    session_id=session_id,
                 )
-                active_msg_tasks.add(task)
-                task.add_done_callback(active_msg_tasks.discard)
 
             elif msg_type == "regenerate":
-                # Re-process the last user message for a fresh response
                 last_user_msg = orchestrator.get_last_user_message()
                 if last_user_msg:
                     await _ensure_session()
-                    task = asyncio.create_task(
-                        _stream_to_ws(orchestrator.handle_message(last_user_msg))
+                    orchestrator.run_in_background(
+                        orchestrator.handle_message(last_user_msg, session_id=session_id),
+                        session_id=session_id,
                     )
-                    active_msg_tasks.add(task)
-                    task.add_done_callback(active_msg_tasks.discard)
 
             elif msg_type == "approve_permission":
                 await _ensure_session()
@@ -313,14 +290,13 @@ async def chat_websocket(
                     "type": "permission_approved",
                     "request_id": data["request_id"],
                 })
-                task = asyncio.create_task(
-                    _stream_to_ws(orchestrator.approve_permission(
+                orchestrator.run_in_background(
+                    orchestrator.approve_permission(
                         data["request_id"],
                         data.get("approval_mode", "once"),
-                    ))
+                    ),
+                    session_id=session_id,
                 )
-                active_msg_tasks.add(task)
-                task.add_done_callback(active_msg_tasks.discard)
 
             elif msg_type == "deny_permission":
                 await _ensure_session()
@@ -328,11 +304,10 @@ async def chat_websocket(
                     "type": "permission_denied",
                     "request_id": data["request_id"],
                 })
-                task = asyncio.create_task(
-                    _stream_to_ws(orchestrator.deny_permission(data["request_id"]))
+                orchestrator.run_in_background(
+                    orchestrator.deny_permission(data["request_id"]),
+                    session_id=session_id,
                 )
-                active_msg_tasks.add(task)
-                task.add_done_callback(active_msg_tasks.discard)
 
     except WebSocketDisconnect:
         logger.info("Chat WebSocket disconnected")
@@ -341,15 +316,10 @@ async def chat_websocket(
         logger.error(f"Chat WebSocket error: {e}")
         get_tracer().error("ws", str(e), session_id=session_id or "(none)")
     finally:
-        _ws_closed = True  # Signal _stream_to_ws to stop sending
-        # DON'T cancel active_msg_tasks — let the orchestrator finish
-        # its work (DB persistence, memory demotion) in the background.
-        # The _ws_closed flag prevents events from being sent to the
-        # dead WebSocket. Results will be persisted and visible when
-        # the user returns to this session.
-        #
-        # But DO cancel any pending user interaction futures so skills
-        # don't hang 120s waiting for a response that will never arrive.
+        # Tasks run on the orchestrator — they keep running after the WS
+        # closes.  We only need to clean up the WS-specific resources.
+        # Cancel pending user interaction futures so skills don't hang
+        # waiting for input that will never arrive.
         await orchestrator.cancel_pending_user_interactions(session_id=session_id)
         reader_task.cancel()
         forward_task.cancel()

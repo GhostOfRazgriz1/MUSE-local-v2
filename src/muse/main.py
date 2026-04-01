@@ -136,7 +136,41 @@ async def create_orchestrator(config: Config | None = None):
         logger.debug("Custom provider loading skipped: %s", e)
 
     provider = registry
-    model_router = ModelRouter(provider, db, config.default_model)
+
+    # Load user's saved default model (falls back to config if not set).
+    saved_default_model = config.default_model
+    try:
+        async with db.execute(
+            "SELECT value FROM user_settings WHERE key = 'default_model'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row and row[0]:
+            saved_default_model = row[0]
+            logger.info("User saved default model: %s", saved_default_model)
+    except Exception:
+        pass
+
+    # Verify the default model's provider is actually registered.
+    # If not, pick the first model from whatever provider IS available.
+    default_prefix = saved_default_model.split("/")[0] if "/" in saved_default_model else ""
+    if default_prefix and default_prefix not in registry.providers:
+        available = list(registry.providers.keys())
+        if available:
+            picked = available[0]
+            try:
+                prov_models = await registry.providers[picked].list_models()
+                if prov_models:
+                    saved_default_model = f"{picked}/{prov_models[0].id}"
+                    logger.info(
+                        "Configured provider '%s' not available, auto-selected: %s",
+                        default_prefix, saved_default_model,
+                    )
+            except Exception:
+                logger.debug("Could not list models from %s for auto-selection", picked)
+
+    # Don't mutate config (frozen dataclass) — pass the resolved model
+    # directly to the router.
+    model_router = ModelRouter(provider, db, saved_default_model)
 
     # OAuth
     from muse.credentials.oauth import OAuthManager, PROVIDERS as OAUTH_PROVIDERS

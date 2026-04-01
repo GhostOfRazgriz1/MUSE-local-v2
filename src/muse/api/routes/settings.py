@@ -97,6 +97,12 @@ async def set_setting(key: str, body: dict):
     if key == "language":
         orchestrator._user_language = str(value).strip()
 
+    # Hot-reload default model so the change takes effect immediately.
+    if key == "default_model":
+        model_id = str(value).strip()
+        orchestrator._model_router.default_model = model_id
+        orchestrator._classifier.set_provider(orchestrator._provider, model_id)
+
     return {"key": key, "value": value}
 
 

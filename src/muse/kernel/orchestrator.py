@@ -180,7 +180,7 @@ class Orchestrator:
         # Onboarding (first-session setup)
         self._onboarding: OnboardingFlow | None = None
         if OnboardingFlow.needs_onboarding(config):
-            self._onboarding = OnboardingFlow(config, provider, config.default_model)
+            self._onboarding = OnboardingFlow(config, provider, model_router.default_model)
 
         # Context assembly
         self._identity = load_identity(config)
@@ -281,7 +281,7 @@ class Orchestrator:
         # registered if at least one credential is configured — this
         # avoids wasting LLM tokens routing to unconfigured skills.
         self._classifier = SemanticIntentClassifier(self._embeddings)
-        self._classifier.set_provider(self._provider, self._config.default_model)
+        self._classifier.set_provider(self._provider, self._model_router.default_model)
         for skill in await self._skill_loader.get_installed():
             manifest = skill.get("manifest", {})
             creds = manifest.get("credentials", [])
@@ -890,16 +890,15 @@ class Orchestrator:
     # Main agent loop entry point
     # ------------------------------------------------------------------
 
-    async def handle_message(self, user_message: str) -> AsyncIterator[dict]:
+    async def handle_message(
+        self, user_message: str,
+        session_id: str | None = None,
+    ) -> AsyncIterator[dict]:
         """Process a user message through the agent loop.
 
-        Yields event dicts that the API layer can stream to the UI:
-        - {"type": "thinking", "content": "..."}
-        - {"type": "response", "content": "..."}
-        - {"type": "task_started", "task_id": "...", "skill": "..."}
-        - {"type": "task_completed", "task_id": "...", "result": "..."}
-        - {"type": "permission_request", ...}
-        - {"type": "error", "content": "..."}
+        *session_id* should be passed by the caller to pin persistence
+        to the correct session.  If omitted, falls back to
+        ``self._session_id`` (unsafe if sessions can switch mid-flight).
         """
         # Onboarding intercept — first-session setup flow
         if self._onboarding and self._onboarding.is_active:
@@ -932,9 +931,10 @@ class Orchestrator:
         # Ensure we have a session
         await self.ensure_session()
 
-        # Capture session_id NOW — it won't change even if the user
-        # switches sessions while this task is still running.
-        frozen_session_id = self._session_id
+        # Use the caller-provided session_id (captured before the generator
+        # was created, immune to session switches).  Fall back to current
+        # session only if the caller didn't provide one.
+        frozen_session_id = session_id or self._session_id
 
         # Snapshot the conversation history BEFORE appending this message.
         # When messages run concurrently, each one should only see the
@@ -1657,9 +1657,14 @@ class Orchestrator:
                     elif event.get("type") in ("task_failed", "error"):
                         results[idx] = {"status": "failed", "error": event.get("error", event.get("content", ""))}
                     event["sub_task_index"] = idx
-                    # Suppress response events for intermediate tasks —
-                    # their content feeds downstream, not the user.
                     if idx in _intermediate and event.get("type") == "response":
+                        content = event.get("content", "")
+                        preview = content[:120].split("\n")[0] if content else "Done"
+                        yield {
+                            "type": "status",
+                            "content": f"Task {idx + 1} completed: {preview}",
+                            "sub_task_index": idx,
+                        }
                         continue
                     yield event
             else:
@@ -1714,8 +1719,14 @@ class Orchestrator:
                             "status": "failed",
                             "error": event.get("error", event.get("content", "")),
                         }
-                    # Suppress response events for intermediate tasks.
                     if sub_idx in _intermediate and event.get("type") == "response":
+                        content = event.get("content", "")
+                        preview = content[:120].split("\n")[0] if content else "Done"
+                        yield {
+                            "type": "status",
+                            "content": f"Task {sub_idx + 1} completed: {preview}",
+                            "sub_task_index": sub_idx,
+                        }
                         continue
                     yield event
 
@@ -1931,6 +1942,15 @@ class Orchestrator:
                                 }
                             event["plan_step"] = idx
                             if idx in _intermediate and event.get("type") == "response":
+                                # Show a condensed status instead of the full response
+                                # so the user sees progress, not empty silence.
+                                content = event.get("content", "")
+                                preview = content[:120].split("\n")[0] if content else "Done"
+                                yield {
+                                    "type": "status",
+                                    "content": f"Step {idx + 1} completed: {preview}",
+                                    "plan_step": idx,
+                                }
                                 continue
                             yield event
 
@@ -2792,6 +2812,39 @@ class Orchestrator:
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
         self._event_listeners.remove(queue)
+
+    def run_in_background(self, gen, session_id: str | None = None) -> asyncio.Task:
+        """Run an async generator as a background task on the orchestrator.
+
+        Events yielded by the generator are tagged with ``_session_id``
+        and broadcast via ``_emit_event``.  WS handlers filter events
+        by session so cross-session leakage doesn't occur.
+
+        The task runs independently of any WebSocket connection — if the
+        WS disconnects, the generator keeps running and persists results.
+
+        Returns the asyncio.Task so the caller can track it if needed.
+        """
+        sid = session_id or self._session_id
+
+        async def _run():
+            try:
+                async for event in gen:
+                    if isinstance(event, dict):
+                        event["_session_id"] = sid
+                    await self._emit_event(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning("Background task error: %s", e)
+                await self._emit_event({
+                    "type": "error",
+                    "_session_id": sid,
+                    "content": f"Something went wrong: {str(e)}",
+                })
+
+        task = asyncio.create_task(_run())
+        return task
 
     async def _emit_event(self, event: dict) -> None:
         for queue in self._event_listeners:
