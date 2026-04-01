@@ -630,15 +630,17 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
         ) : (
           <div className="chat-messages-inner">
             {messages.map((msg, i) => {
-              // Insert date separators when the day changes between messages
+              // Insert date separators when the day changes between messages.
+              // Only messages with _createdAt (persisted history) get separators.
+              // Live events (greeting, streaming) have no timestamp and skip this.
               const createdAt = "_createdAt" in msg ? msg._createdAt : undefined;
-              const msgDate = createdAt ? new Date(createdAt) : (i === 0 ? new Date() : undefined);
+              const msgDate = createdAt ? new Date(createdAt) : undefined;
               let dateSep: React.ReactNode = null;
               if (msgDate) {
                 const prevMsg = i > 0 ? messages[i - 1] : undefined;
                 const prevCreatedAt = prevMsg && "_createdAt" in prevMsg ? prevMsg._createdAt : undefined;
                 const prevDate = prevCreatedAt ? new Date(prevCreatedAt) : undefined;
-                const showSep = i === 0 || (prevDate && msgDate.toDateString() !== prevDate.toDateString());
+                const showSep = !prevDate || msgDate.toDateString() !== prevDate.toDateString();
                 if (showSep) {
                   const now = new Date();
                   const diffDays = Math.floor((now.getTime() - msgDate.getTime()) / 86400000);
@@ -649,13 +651,6 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   else label = msgDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
                   dateSep = <div className="date-separator"><span>{label}</span></div>;
                 }
-              }
-              // First message with no date info — show "Today" only for
-              // genuinely new sessions (no history loaded).  For resumed
-              // sessions the first history message will have _createdAt and
-              // supply its own separator with the correct date.
-              if (i === 0 && !dateSep && !createdAt && messages.every((m) => !("_createdAt" in m))) {
-                dateSep = <div className="date-separator"><span>Today</span></div>;
               }
               // Render helper — wraps any message element with a date separator if needed
               const wrapMsg = (el: React.ReactNode) =>

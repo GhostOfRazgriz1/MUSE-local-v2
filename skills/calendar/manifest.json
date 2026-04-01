@@ -1,20 +1,28 @@
 {
     "name": "Calendar",
-    "version": "0.1.0",
-    "description": "View, create, and manage calendar events. Check your schedule, see upcoming meetings, create new events, find available times. Uses Google Calendar.",
+    "version": "0.2.0",
+    "description": "View, create, and manage calendar events. Check your schedule, see upcoming meetings, create new events. Supports Google Calendar and Outlook Calendar.",
     "category": "communication",
     "author": "MUSE",
     "permissions": ["calendar:read", "calendar:write", "profile:read", "memory:read", "memory:write"],
     "memory_namespaces": ["calendar"],
-    "allowed_domains": ["www.googleapis.com"],
+    "allowed_domains": ["www.googleapis.com", "graph.microsoft.com"],
     "credentials": [
         {
             "id": "google_oauth",
             "label": "Google Calendar",
             "type": "oauth",
-            "required": true,
+            "required": false,
             "help_url": "https://console.cloud.google.com",
             "help_text": "Connect your Google account to access Calendar."
+        },
+        {
+            "id": "microsoft_oauth",
+            "label": "Outlook Calendar",
+            "type": "oauth",
+            "required": false,
+            "help_url": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps",
+            "help_text": "Connect your Microsoft account to access Outlook Calendar."
         }
     ],
     "max_tokens": 4000,

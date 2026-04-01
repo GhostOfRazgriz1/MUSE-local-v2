@@ -3472,12 +3472,11 @@ textarea:focus-visible {
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
   gap: 12px;
 }
 
-.provider-key-row:last-child {
-  border-bottom: none;
+.provider-key-row + .provider-key-row {
+  border-top: 1px solid var(--border);
 }
 
 .provider-key-info {
@@ -3603,21 +3602,24 @@ textarea:focus-visible {
 /* ── Custom Provider Form ── */
 
 .custom-provider-add-btn {
-  margin-top: 8px;
+  margin: 0;
+  padding: 10px 16px;
   font-size: var(--fs-xs) !important;
   color: var(--text-muted) !important;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
 }
 .custom-provider-add-btn:hover {
   color: var(--accent) !important;
+  background: var(--bg-hover);
 }
 .custom-provider-form {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 14px 16px;
-  margin-top: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
   background: var(--bg-surface);
   animation: settings-advanced-in 0.15s var(--ease-out);
 }
@@ -4421,6 +4423,27 @@ textarea:focus-visible {
   min-width: 240px;
 }
 
+.oauth-setup-hint {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.oauth-redirect-uri {
+  display: block;
+  margin-top: 4px;
+  padding: 6px 10px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-2xs);
+  color: var(--text-primary);
+  cursor: pointer;
+  word-break: break-all;
+  transition: background var(--transition-fast);
+}
+.oauth-redirect-uri:hover {
+  background: var(--accent-subtle);
+}
 .oauth-setup-fields {
   display: flex;
   flex-direction: column;

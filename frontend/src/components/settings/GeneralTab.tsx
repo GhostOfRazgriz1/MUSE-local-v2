@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { IconDollarSign, IconCheck } from "../Icons";
+import { IconCheck, IconCpu } from "../Icons";
 import { apiFetch } from "../../hooks/useApiToken";
 import { SettingsSection, SettingsLoader } from "./shared";
 
@@ -144,6 +144,9 @@ export default function GeneralTab() {
   const [fontSize, setFontSize] = useState<FontSizePreset>(getStoredFontSize);
   const [fontFamily, setFontFamily] = useState<FontFamilyPreset>(getStoredFontFamily);
   const [palette, setPalette] = useState<PalettePreset>(getStoredPalette);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
+    typeof window !== "undefined" && "Notification" in window ? Notification.permission : "default"
+  );
 
   useEffect(() => {
     apiFetch("/api/settings")
@@ -289,6 +292,23 @@ export default function GeneralTab() {
               }
             />
             <button
+              className="btn btn-sm btn-ghost"
+              onClick={async () => {
+                try {
+                  const res = await apiFetch("/api/files/pick-folder", { method: "POST" });
+                  if (res.ok) {
+                    const data = await res.json();
+                    if (data.path) {
+                      setSettings((prev) => ({ ...prev, "workspace.directory": data.path }));
+                      saveSetting("workspace.directory", data.path);
+                    }
+                  }
+                } catch {}
+              }}
+            >
+              Browse
+            </button>
+            <button
               className="btn btn-primary btn-sm"
               onClick={() => saveSetting("workspace.directory", settings["workspace.directory"] || "")}
               disabled={saving === "workspace.directory"}
@@ -309,19 +329,22 @@ export default function GeneralTab() {
       >
         {typeof window !== "undefined" && "Notification" in window ? (
           <div className="settings-notification-row">
-            {Notification.permission === "granted" ? (
+            {notifPermission === "granted" ? (
               <div className="settings-notification-status">
                 <IconCheck size={14} />
                 <span>Notifications enabled. You can toggle them off in your browser settings.</span>
               </div>
-            ) : Notification.permission === "denied" ? (
+            ) : notifPermission === "denied" ? (
               <div className="settings-notification-status denied">
                 <span>Notifications blocked. Enable them in your browser's site settings.</span>
               </div>
             ) : (
               <button
                 className="btn btn-primary btn-sm"
-                onClick={() => Notification.requestPermission()}
+                onClick={async () => {
+                  const result = await Notification.requestPermission();
+                  setNotifPermission(result);
+                }}
               >
                 Enable desktop notifications
               </button>
@@ -334,20 +357,20 @@ export default function GeneralTab() {
         )}
       </SettingsSection>
 
-      {/* Trust Budget */}
-      <SettingsSection title="Trust Budget" description="Control how much your agent can spend per day.">
+      {/* Daily Token Budget */}
+      <SettingsSection title="Daily Token Limit" description="Limit how many AI tokens the agent can use per day.">
         <div className="settings-field">
-          <label className="settings-label">Daily Budget (USD)</label>
+          <label className="settings-label">Maximum tokens per day</label>
           <div className="settings-input-row">
             <div className="settings-input-prefix">
-              <IconDollarSign size={14} />
+              <IconCpu size={14} />
             </div>
             <input
               type="number"
               className="settings-input has-prefix"
-              value={settings["daily_budget"] ?? "1.00"}
+              value={settings["daily_budget"] ?? "50000"}
               min="0"
-              step="0.25"
+              step="10000"
               onChange={(e) =>
                 setSettings((p) => ({ ...p, daily_budget: e.target.value }))
               }
@@ -358,7 +381,7 @@ export default function GeneralTab() {
             )}
           </div>
           <div className="settings-hint">
-            The agent will pause and ask before exceeding this amount.
+            The agent will pause and ask before exceeding this limit. A typical message uses 500–2,000 tokens.
           </div>
         </div>
       </SettingsSection>

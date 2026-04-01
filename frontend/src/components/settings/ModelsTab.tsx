@@ -170,8 +170,8 @@ function ModelsTab() {
               onDeleted={p.is_custom ? onKeyChanged : undefined}
             />
           ))}
+          <AddCustomProviderForm onAdded={onKeyChanged} />
         </div>
-        <AddCustomProviderForm onAdded={onKeyChanged} />
       </SettingsSection>
 
       {/* Default model — only from active providers */}

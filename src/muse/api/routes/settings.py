@@ -446,6 +446,11 @@ async def store_credential(body: dict):
         service_name=body.get("service_name", ""),
         linked_permission=body.get("linked_permission"),
     )
+    # Re-evaluate skill routing with the new credential
+    try:
+        await orchestrator.refresh_skill_registration()
+    except Exception:
+        pass
     return {"status": "stored", "id": body["id"]}
 
 
@@ -456,4 +461,9 @@ async def delete_credential(credential_id: str):
     if not orchestrator:
         return {"error": "Not ready"}
     await orchestrator._vault.delete(credential_id)
+    # Re-evaluate skill routing without the removed credential
+    try:
+        await orchestrator.refresh_skill_registration()
+    except Exception:
+        pass
     return {"status": "deleted"}

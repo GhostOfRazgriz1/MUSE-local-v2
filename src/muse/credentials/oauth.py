@@ -57,8 +57,29 @@ GOOGLE = OAuthProviderConfig(
 )
 
 
+MICROSOFT = OAuthProviderConfig(
+    name="microsoft",
+    auth_url="https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    token_url="https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    scopes={
+        "calendar": [
+            "Calendars.Read",
+            "Calendars.ReadWrite",
+        ],
+        "email": [
+            "Mail.Read",
+            "Mail.Send",
+            "Mail.ReadWrite",
+        ],
+    },
+    credential_id="microsoft_oauth",
+    domains=["graph.microsoft.com"],
+)
+
+
 PROVIDERS: dict[str, OAuthProviderConfig] = {
     "google": GOOGLE,
+    "microsoft": MICROSOFT,
 }
 
 

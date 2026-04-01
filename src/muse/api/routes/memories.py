@@ -75,7 +75,16 @@ async def list_memories(
         raise HTTPException(503, "Orchestrator not ready")
 
     repo = orchestrator._memory_repo
-    entries = await repo.get_by_relevance(namespace=namespace, limit=limit, min_score=0.0)
+    if namespace:
+        entries = await repo.get_by_relevance(namespace=namespace, limit=limit, min_score=0.0)
+    else:
+        # Query each consumer namespace (get_by_relevance requires an explicit namespace)
+        import asyncio
+        ns_results = await asyncio.gather(*[
+            repo.get_by_relevance(namespace=ns, limit=limit, min_score=0.0)
+            for ns in _CONSUMER_NS
+        ])
+        entries = [e for batch in ns_results for e in batch]
     items = [_entry_to_item(e) for e in entries if _is_consumer_visible(e)]
 
     # Group by namespace for the profile card view.

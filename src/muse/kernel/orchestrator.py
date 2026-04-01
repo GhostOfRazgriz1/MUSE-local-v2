@@ -273,11 +273,29 @@ class Orchestrator:
         # Give sandbox a reference to us for in-process skill execution
         self._sandbox.set_orchestrator(self)
 
-        # Build two-stage intent classifier from installed skills
+        # Build two-stage intent classifier from installed skills.
+        # Skills that require credentials (OAuth, API keys) are only
+        # registered if at least one credential is configured — this
+        # avoids wasting LLM tokens routing to unconfigured skills.
         self._classifier = SemanticIntentClassifier(self._embeddings)
         self._classifier.set_provider(self._provider, self._config.default_model)
         for skill in await self._skill_loader.get_installed():
             manifest = skill.get("manifest", {})
+            creds = manifest.get("credentials", [])
+            if creds:
+                # Check if at least one credential is in the vault
+                has_any = False
+                for c in creds:
+                    cred_id = c.get("id") if isinstance(c, dict) else getattr(c, "id", "")
+                    if cred_id and await self._vault.retrieve_raw(cred_id):
+                        has_any = True
+                        break
+                if not has_any:
+                    logger.debug(
+                        "Skipping skill %s in classifier (no credentials configured)",
+                        skill["skill_id"],
+                    )
+                    continue
             self._classifier.register_skill(
                 skill_id=skill["skill_id"],
                 name=manifest.get("name", skill["skill_id"]),
@@ -398,6 +416,39 @@ class Orchestrator:
 
         self._context_assembler.set_skills_catalog(catalog)
         logger.info("Skills catalog updated (%d skills)", len(lines))
+
+    async def refresh_skill_registration(self) -> None:
+        """Re-evaluate which skills should be in the classifier.
+
+        Call after credential changes (OAuth connect/disconnect, API key
+        add/remove) so that newly-configured skills become routable and
+        unconfigured skills are hidden from the routing prompt.
+        """
+        for skill in await self._skill_loader.get_installed():
+            manifest = skill.get("manifest", {})
+            sid = skill["skill_id"]
+            creds = manifest.get("credentials", [])
+
+            if creds:
+                has_any = False
+                for c in creds:
+                    cred_id = c.get("id") if isinstance(c, dict) else getattr(c, "id", "")
+                    if cred_id and await self._vault.retrieve_raw(cred_id):
+                        has_any = True
+                        break
+                if has_any and sid not in self._classifier._skills:
+                    self._classifier.register_skill(
+                        skill_id=sid,
+                        name=manifest.get("name", sid),
+                        description=manifest.get("description", ""),
+                        actions=manifest.get("actions", []),
+                    )
+                    logger.info("Skill %s now routable (credential configured)", sid)
+                elif not has_any and sid in self._classifier._skills:
+                    self._classifier.unregister_skill(sid)
+                    logger.info("Skill %s removed from routing (credential removed)", sid)
+
+        await self._rebuild_skills_catalog()
 
     async def _register_mcp_tools(self) -> None:
         """Register all connected MCP servers as virtual skills."""

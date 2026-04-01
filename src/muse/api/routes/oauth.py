@@ -104,6 +104,12 @@ async def oauth_callback(code: str, state: str, request: Request):
             f"<h2>OAuth Error</h2><p>{safe_msg}</p>", status_code=400,
         )
 
+    # Re-evaluate skill routing now that a new credential is available.
+    try:
+        await orchestrator.refresh_skill_registration()
+    except Exception as exc:
+        logger.debug("Skill refresh after OAuth failed: %s", exc)
+
     safe_id = html.escape(credential_id)
     return HTMLResponse(
         "<h2>Authorization Successful</h2>"

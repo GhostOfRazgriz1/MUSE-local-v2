@@ -148,6 +148,94 @@ async def get_platform():
     }
 
 
+# ── Native folder picker ───────────────────────────────────────
+
+
+@router.post("/pick-folder")
+async def pick_folder():
+    """Open a native folder picker dialog and return the selected path.
+
+    Uses platform-native dialogs:
+      - Windows: PowerShell + System.Windows.Forms
+      - macOS: osascript
+      - Linux: zenity or kdialog
+    Returns ``{"path": "..."}`` or ``{"path": null}`` if cancelled.
+    """
+    import asyncio
+
+    selected: str | None = None
+
+    def _tk_pick():
+        """Open a tkinter folder dialog (works on all platforms with Tk)."""
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.askdirectory(
+                title="Select workspace folder",
+                mustexist=True,
+            )
+            root.destroy()
+            return path or None
+        except Exception:
+            return None
+
+    try:
+        if sys.platform == "win32":
+            selected = await asyncio.to_thread(_tk_pick)
+
+        else:
+            # macOS / Linux: try native tools first, fall back to tkinter
+            native_selected = None
+
+            if sys.platform == "darwin":
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "osascript", "-e",
+                        'set f to POSIX path of (choose folder with prompt "Select workspace folder")',
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
+                    result = stdout.decode().strip().rstrip("/")
+                    if result and proc.returncode == 0:
+                        native_selected = result
+                except Exception:
+                    pass
+            else:
+                for cmd in (
+                    ["zenity", "--file-selection", "--directory", "--title=Select workspace folder"],
+                    ["kdialog", "--getexistingdirectory", str(Path.home())],
+                ):
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            *cmd,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
+                        if proc.returncode == 0:
+                            native_selected = stdout.decode().strip()
+                            break
+                    except FileNotFoundError:
+                        continue
+
+            if native_selected:
+                selected = native_selected
+            else:
+                # Fallback: tkinter (works on macOS/Linux if Tk is available)
+                selected = await asyncio.to_thread(_tk_pick)
+
+    except asyncio.TimeoutError:
+        logger.warning("Folder picker timed out")
+    except Exception as e:
+        logger.warning("Folder picker failed: %s", e)
+
+    return {"path": selected}
+
+
 # ── File upload / download / browse ────────────────────────────
 
 

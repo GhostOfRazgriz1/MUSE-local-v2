@@ -1,20 +1,28 @@
 {
     "name": "Email",
-    "version": "0.1.0",
-    "description": "Read, search, and send emails. Check your inbox, read messages, compose and send new emails, reply to threads. Uses Gmail.",
+    "version": "0.2.0",
+    "description": "Read, search, and send emails. Check your inbox, read messages, compose and send new emails. Supports Gmail and Outlook.",
     "category": "communication",
     "author": "MUSE",
     "permissions": ["email:read", "email:send", "profile:read", "memory:read", "memory:write"],
     "memory_namespaces": ["email"],
-    "allowed_domains": ["gmail.googleapis.com", "www.googleapis.com"],
+    "allowed_domains": ["gmail.googleapis.com", "www.googleapis.com", "graph.microsoft.com"],
     "credentials": [
         {
             "id": "google_oauth",
             "label": "Gmail",
             "type": "oauth",
-            "required": true,
+            "required": false,
             "help_url": "https://console.cloud.google.com",
             "help_text": "Connect your Google account to access Gmail."
+        },
+        {
+            "id": "microsoft_oauth",
+            "label": "Outlook",
+            "type": "oauth",
+            "required": false,
+            "help_url": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps",
+            "help_text": "Connect your Microsoft account to access Outlook email."
         }
     ],
     "max_tokens": 4000,

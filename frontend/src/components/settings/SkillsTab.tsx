@@ -586,8 +586,16 @@ function OAuthSetupForm({
     }
   };
 
+  const redirectUri = `${window.location.protocol}//${window.location.hostname}:${window.location.port || (window.location.protocol === "https:" ? "443" : "80")}/api/oauth/callback`;
+
   return (
     <div className="oauth-setup-form">
+      <div className="oauth-setup-hint">
+        In your provider's developer console, add this as an authorized redirect URI:
+        <code className="oauth-redirect-uri" onClick={() => navigator.clipboard.writeText(redirectUri)} title="Click to copy">
+          {redirectUri}
+        </code>
+      </div>
       <div className="oauth-setup-fields">
         <input
           type="text"
