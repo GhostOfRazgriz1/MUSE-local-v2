@@ -1089,9 +1089,30 @@ class Orchestrator:
                     user_message, intent, session_id=frozen_session_id,
                 ):
                     yield event
+            elif intent.mode == ExecutionMode.CLARIFY:
+                # The classifier is unsure — ask the user for clarification
+                # instead of guessing wrong.
+                question = intent.clarify_question
+                yield {
+                    "type": "response",
+                    "content": question,
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "model": "",
+                }
+                # Persist so the question shows in history
+                if frozen_session_id:
+                    asyncio.create_task(self._persist_and_demote(
+                        question, "",
+                        session_id=frozen_session_id,
+                    ))
             else:
                 await self._patterns.record("inline", instruction=user_message)
-                async for event in self._handle_inline(user_message, intent):
+                async for event in self._handle_inline(
+                    user_message, intent, history_snapshot,
+                    precomputed_embedding=precomputed_embedding,
+                    session_id=frozen_session_id,
+                ):
                     yield event
 
         except Exception as e:

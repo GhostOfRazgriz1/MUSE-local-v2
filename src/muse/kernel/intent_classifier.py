@@ -26,6 +26,7 @@ class ExecutionMode(Enum):
     DELEGATED = "delegated"
     MULTI_DELEGATED = "multi_delegated"
     GOAL = "goal"
+    CLARIFY = "clarify"
 
 
 @dataclass
@@ -47,6 +48,7 @@ class ClassifiedIntent:
     task_description: str = ""
     model_override: str | None = None
     confidence: float = 1.0
+    clarify_question: str = ""  # Set when mode == CLARIFY
 
 
 MODEL_KEYWORDS: dict[str, str] = {
@@ -154,10 +156,9 @@ class SemanticIntentClassifier:
             f'{{"skill_id": "...", "instruction": "...", "depends_on": []}},'
             f"...]}}  — 2-3 tasks needed in a clear combination\n"
             f'{{"action": "goal"}}  — complex goal requiring a multi-step plan '
-            f"(research + analysis + output, or any task needing 4+ steps)\n\n"
-            f"Use 'goal' when the user gives a high-level objective that requires "
-            f"planning, not just combining 2 skills. Use 'multi' for simple "
-            f"combinations like 'search X and save a note'.\n\n"
+            f"(research + analysis + output, or any task needing 4+ steps)\n"
+            f'{{"action": "clarify", "question": "..."}}  — the request is ambiguous '
+            f"and you need to ask the user one short question before proceeding\n\n"
             f"Reply with ONLY valid JSON."
         )
 
@@ -167,8 +168,27 @@ class SemanticIntentClassifier:
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=300,
                 system=(
-                    "You are a routing classifier for an AI agent. "
-                    "Decide which skill(s) should handle the user's request. "
+                    "You are a routing classifier for an AI agent. Your job is to "
+                    "decide which skill(s) should handle the user's request.\n\n"
+                    "DECISION FRAMEWORK:\n"
+                    "1. Focus on the user's INTENT, not keywords. 'Create a mathematical "
+                    "breakdown document' is a writing task (Files/Notes), not a coding "
+                    "task, even though it mentions math.\n"
+                    "2. A skill should only be used if the user wants its SPECIFIC "
+                    "capability — not because the topic is vaguely related.\n"
+                    "3. Code Runner is ONLY for executing actual runnable code (Python, "
+                    "JS, etc.) — never for writing documents, reports, or analysis.\n"
+                    "4. If the user wants to CREATE content (reports, summaries, documents, "
+                    "breakdowns, analyses), use Files to write it or Notes to save it.\n"
+                    "5. When in doubt between two skills, use 'clarify' to ask the user "
+                    "a SHORT question (one sentence). Only clarify when the ambiguity "
+                    "would lead to a meaningfully different action — don't clarify "
+                    "trivial details.\n"
+                    "6. If the request is clearly conversational or you're unsure, use "
+                    "'none' and let the agent respond directly.\n"
+                    "7. Use 'goal' when the user gives a high-level objective requiring "
+                    "4+ steps (research + analysis + output). Use 'multi' for simple "
+                    "2-3 skill combinations like 'search X and save a note'.\n\n"
                     "Reply with ONLY valid JSON, no markdown, no explanation."
                 ),
             )
@@ -261,6 +281,16 @@ class SemanticIntentClassifier:
                     task_description=user_message,
                     model_override=model_override,
                     confidence=1.0,
+                )
+
+            elif action == "clarify":
+                question = data.get("question", "Could you clarify what you'd like me to do?")
+                logger.debug("LLM routed → clarify: %s", question[:60])
+                return ClassifiedIntent(
+                    mode=ExecutionMode.CLARIFY,
+                    task_description=user_message,
+                    model_override=model_override,
+                    clarify_question=question,
                 )
 
             # action == "none" or fallthrough

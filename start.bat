@@ -13,9 +13,22 @@ echo.
 set "ROOT=%~dp0"
 cd /d "%ROOT%"
 
-:: Create log directory
-set "LOG_DIR=%ROOT%logs"
-if not exist "!LOG_DIR!" mkdir "!LOG_DIR!"
+:: Use %TEMP% for launcher scripts to avoid OneDrive locks and
+:: "Permission denied" when re-running while services are still alive.
+set "LAUNCHER_DIR=%TEMP%\muse_launchers"
+if not exist "!LAUNCHER_DIR!" mkdir "!LAUNCHER_DIR!"
+
+:: Kill any leftover MUSE service windows from a previous run
+tasklist /fi "WINDOWTITLE eq MUSE - Backend" 2>nul | find "cmd.exe" >nul && (
+    echo   Stopping previous backend...
+    taskkill /fi "WINDOWTITLE eq MUSE - Backend" /f >nul 2>&1
+    timeout /t 1 /nobreak >nul
+)
+tasklist /fi "WINDOWTITLE eq MUSE - Frontend" 2>nul | find "cmd.exe" >nul && (
+    echo   Stopping previous frontend...
+    taskkill /fi "WINDOWTITLE eq MUSE - Frontend" /f >nul 2>&1
+    timeout /t 1 /nobreak >nul
+)
 
 :: -----------------------------------------------
 :: 1. Check Python venv
@@ -176,7 +189,7 @@ echo  ============================================
 echo.
 
 :: Write backend launcher (live output, stays open on crash)
-> "!LOG_DIR!\_backend.cmd" (
+> "!LAUNCHER_DIR!\_backend.cmd" (
     echo @echo off
     echo title MUSE - Backend
     echo "!PYTHON!" -m uvicorn muse.api.app:create_app --factory --host 127.0.0.1 --port 8080 --reload --app-dir "!ROOT!src"
@@ -189,7 +202,7 @@ echo.
     echo ^)
 )
 
-start "MUSE - Backend" "!LOG_DIR!\_backend.cmd"
+start "MUSE - Backend" "!LAUNCHER_DIR!\_backend.cmd"
 
 :: Wait for backend to be ready (poll instead of fixed timeout)
 echo   Waiting for backend...
@@ -212,7 +225,7 @@ echo   Backend ready.
 :start_frontend
 if "!SKIP_FRONTEND!"=="1" goto :done
 
-> "!LOG_DIR!\_frontend.cmd" (
+> "!LAUNCHER_DIR!\_frontend.cmd" (
     echo @echo off
     echo title MUSE - Frontend
     echo cd /d "!ROOT!frontend"
@@ -226,7 +239,7 @@ if "!SKIP_FRONTEND!"=="1" goto :done
     echo ^)
 )
 
-start "MUSE - Frontend" "!LOG_DIR!\_frontend.cmd"
+start "MUSE - Frontend" "!LAUNCHER_DIR!\_frontend.cmd"
 
 :: Wait for frontend to be ready (poll)
 echo   Waiting for frontend...
