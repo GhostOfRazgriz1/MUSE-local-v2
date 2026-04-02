@@ -124,7 +124,10 @@ class SemanticIntentClassifier:
         self._skills.pop(skill_id, None)
         self._rebuild_cache()
 
-    async def classify(self, user_message: str) -> ClassifiedIntent:
+    async def classify(
+        self, user_message: str,
+        conversation_context: str = "",
+    ) -> ClassifiedIntent:
         """Classify intent via a single LLM call."""
         msg_lower = user_message.lower().strip()
         model_override = _extract_model_override(msg_lower)
@@ -146,7 +149,14 @@ class SemanticIntentClassifier:
             )
 
         # ── Single LLM call for routing ─────────────────────────
+        context_block = ""
+        if conversation_context:
+            context_block = (
+                f"Recent conversation context:\n{conversation_context}\n\n"
+            )
+
         prompt = (
+            f"{context_block}"
             f"User message: \"{user_message}\"\n\n"
             f"Available skills:\n{self._cached_skill_lines}\n\n"
             f"Decide how to handle this message. Reply with JSON:\n"

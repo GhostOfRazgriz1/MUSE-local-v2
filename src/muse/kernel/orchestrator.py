@@ -1016,7 +1016,28 @@ class Orchestrator:
                     return
 
             _t.classify_start(user_message)
-            intent = await self._classifier.classify(user_message)
+
+            # Build conversation context for the classifier so it can
+            # distinguish continuations ("ship it to him") from ambiguous
+            # standalone requests.  Prefer the compacted running summary;
+            # fall back to the last few raw turns if the fold hasn't run.
+            summary, recent = self._compaction.get_context_for_assembly(
+                self._conversation_history,
+            )
+            if summary:
+                classify_context = summary
+            elif recent:
+                classify_context = "\n".join(
+                    f"{t['role']}: {t['content'][:150]}"
+                    for t in recent[-6:]
+                )
+            else:
+                classify_context = ""
+
+            intent = await self._classifier.classify(
+                user_message,
+                conversation_context=classify_context,
+            )
             _t.classify_result(intent)
 
             # Apply user's skill preference per category
@@ -1090,22 +1111,16 @@ class Orchestrator:
                 ):
                     yield event
             elif intent.mode == ExecutionMode.CLARIFY:
-                # The classifier is unsure — ask the user for clarification
-                # instead of guessing wrong.
-                question = intent.clarify_question
-                yield {
-                    "type": "response",
-                    "content": question,
-                    "tokens_in": 0,
-                    "tokens_out": 0,
-                    "model": "",
-                }
-                # Persist so the question shows in history
-                if frozen_session_id:
-                    asyncio.create_task(self._persist_and_demote(
-                        question, "",
-                        session_id=frozen_session_id,
-                    ))
+                # Route through inline so the response has full
+                # conversation context instead of using the classifier's
+                # context-free question verbatim.
+                await self._patterns.record("inline", instruction=user_message)
+                async for event in self._handle_inline(
+                    user_message, intent, history_snapshot,
+                    precomputed_embedding=precomputed_embedding,
+                    session_id=frozen_session_id,
+                ):
+                    yield event
             else:
                 await self._patterns.record("inline", instruction=user_message)
                 async for event in self._handle_inline(
