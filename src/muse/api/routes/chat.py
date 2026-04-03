@@ -222,6 +222,29 @@ async def chat_websocket(
                         "type": "task_killed",
                         "task_id": data["task_id"],
                     })
+                elif msg_type == "screen_start":
+                    mode_str = data.get("mode", "passive")
+                    if hasattr(orchestrator, "screen_manager"):
+                        from muse.screen.manager import ScreenMode
+                        try:
+                            mode = ScreenMode(mode_str)
+                            await orchestrator.screen_manager.start(mode=mode)
+                            status = await orchestrator.screen_manager.check_readiness()
+                            await websocket.send_json({
+                                "type": "screen_status", **status,
+                            })
+                        except (ValueError, RuntimeError) as exc:
+                            await websocket.send_json({
+                                "type": "screen_error",
+                                "content": str(exc),
+                            })
+                elif msg_type == "screen_stop":
+                    if hasattr(orchestrator, "screen_manager"):
+                        await orchestrator.screen_manager.stop()
+                        status = await orchestrator.screen_manager.check_readiness()
+                        await websocket.send_json({
+                            "type": "screen_status", **status,
+                        })
                 elif msg_type == "steer":
                     content = data.get("content", "").strip()
                     if content:

@@ -87,6 +87,25 @@ export type ChatEvent =
       request_id: string;
     }
   | { type: "mood_changed"; mood: string }
+  | {
+      type: "screen_status";
+      mode: "off" | "passive" | "active";
+      is_streaming: boolean;
+      vision_model: string | null;
+      fps: number;
+    }
+  | {
+      type: "screen_action_preview";
+      action: Record<string, unknown>;
+      needs_confirmation: boolean;
+    }
+  | {
+      type: "screen_action_executed";
+      action_type: string;
+      success: boolean;
+      details: string;
+    }
+  | { type: "screen_error"; content: string }
   | { type: "session_working"; session_id: string }
   | { type: "session_idle"; session_id: string }
   | { type: "permission_approved"; request_id: string }

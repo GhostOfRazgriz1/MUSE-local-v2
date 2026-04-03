@@ -126,6 +126,9 @@ BUILTIN_PROVIDERS: dict[str, ProviderDef] = {
     "openrouter": ProviderDef(
         "openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
     ),
+    "local": ProviderDef(
+        "local", "http://localhost:11434/v1", "",
+    ),
 }
 
 
@@ -140,6 +143,7 @@ class Config:
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     default_model: str = "anthropic/claude-sonnet-4"
+    vision_model: str | None = None  # e.g. "local/gemma4:27b" — None = auto-detect
     debug: bool = False
 
     @property

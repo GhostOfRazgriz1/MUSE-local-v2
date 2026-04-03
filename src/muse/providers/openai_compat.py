@@ -55,7 +55,7 @@ class OpenAICompatibleProvider:
         system: str | None = None,
         json_mode: bool = False,
     ) -> CompletionResult:
-        if not self._api_key:
+        if not self._api_key and self._env_var:
             raise ProviderError(
                 f"No API key for {self.name}. "
                 f"Set {self._env_var} or add your key in Settings > Credentials."

@@ -86,6 +86,13 @@ async def create_orchestrator(config: Config | None = None):
     for prefix, pdef in BUILTIN_PROVIDERS.items():
         if prefix == "openrouter":
             continue  # already the fallback
+        # Local provider: no API key needed — register unconditionally
+        if not pdef.env_var:
+            from muse.providers.local import LocalProvider
+            local_prov = LocalProvider(base_url=pdef.base_url, name=pdef.name)
+            registry.register(prefix, local_prov)
+            logger.info("Registered local LLM provider: %s (%s)", prefix, pdef.base_url)
+            continue
         stored_key = await credential_vault.retrieve(f"{prefix}_api_key")
         if not stored_key:
             continue
@@ -167,7 +174,10 @@ async def create_orchestrator(config: Config | None = None):
 
     # Don't mutate config (frozen dataclass) — pass the resolved model
     # directly to the router.
-    model_router = ModelRouter(provider, db, saved_default_model)
+    model_router = ModelRouter(
+        provider, db, saved_default_model,
+        vision_model=config.vision_model,
+    )
 
     # OAuth
     from muse.credentials.oauth import OAuthManager, PROVIDERS as OAUTH_PROVIDERS

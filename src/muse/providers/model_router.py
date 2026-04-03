@@ -27,10 +27,12 @@ class ModelRouter:
         provider: ProviderRegistry,
         db: aiosqlite.Connection,
         default_model: str,
+        vision_model: str | None = None,
     ) -> None:
         self._provider = provider
         self._db = db
         self.default_model = default_model
+        self._vision_model = vision_model
 
     # ------------------------------------------------------------------
     # Model resolution
@@ -40,10 +42,24 @@ class ModelRouter:
         self,
         skill_id: str | None = None,
         task_override: str | None = None,
+        required_capabilities: list[str] | None = None,
     ) -> str:
-        """Return the model ID to use, following the priority chain."""
+        """Return the model ID to use, following the priority chain.
+
+        When *required_capabilities* is provided (e.g. ``["video"]``),
+        the router first checks the dedicated ``vision_model`` config,
+        then scans all registered models for one that advertises the
+        requested capabilities.  Falls back to the normal priority chain
+        if no capable model is found.
+        """
         if task_override:
             return task_override
+
+        # Capability-based routing (e.g. vision/video tasks)
+        if required_capabilities:
+            capable = await self._find_capable_model(required_capabilities)
+            if capable:
+                return capable
 
         if skill_id:
             row = await self._db.execute(
@@ -55,6 +71,36 @@ class ModelRouter:
                 return result[0]
 
         return self.default_model
+
+    async def _find_capable_model(self, capabilities: list[str]) -> str | None:
+        """Find a model that supports all requested capabilities.
+
+        Checks the explicit vision_model config first, then scans the
+        provider registry for any model advertising the capabilities.
+        """
+        # 1. Explicit vision_model config takes priority
+        if self._vision_model:
+            try:
+                info = await self._provider.get_model_info(self._vision_model)
+                if info and all(c in info.capabilities for c in capabilities):
+                    return self._vision_model
+            except Exception:
+                logger.debug("Vision model %s not available", self._vision_model)
+
+        # 2. Scan all registered models
+        try:
+            all_models = await self._provider.list_models()
+            for model in all_models:
+                if all(c in model.capabilities for c in capabilities):
+                    logger.info(
+                        "Auto-selected model %s for capabilities %s",
+                        model.id, capabilities,
+                    )
+                    return model.id
+        except Exception:
+            logger.debug("Failed to scan models for capabilities %s", capabilities)
+
+        return None
 
     # ------------------------------------------------------------------
     # Per-skill overrides

@@ -16,12 +16,13 @@ const ModelsTab = lazy(() => import("./ModelsTab"));
 const SecurityTab = lazy(() => import("./SecurityTab"));
 const ProactivityTab = lazy(() => import("./ProactivityTab"));
 const MCPTab = lazy(() => import("./McpTab"));
+const VisionTab = lazy(() => import("./VisionTab"));
 
 interface SettingsProps {
   onBack: () => void;
 }
 
-type Tab = "general" | "skills" | "models" | "security" | "proactivity" | "mcp";
+type Tab = "general" | "skills" | "models" | "security" | "proactivity" | "mcp" | "vision";
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "general", label: "General", icon: <IconSliders size={16} /> },
@@ -30,6 +31,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "security", label: "Security", icon: <IconShield size={16} /> },
   { id: "proactivity", label: "Proactivity", icon: <IconZap size={16} /> },
   { id: "mcp", label: "MCP Servers", icon: <IconPlug size={16} /> },
+  { id: "vision", label: "Vision", icon: <IconCpu size={16} /> },
 ];
 
 export const Settings: React.FC<SettingsProps> = ({ onBack }) => {
@@ -63,6 +65,7 @@ export const Settings: React.FC<SettingsProps> = ({ onBack }) => {
           {activeTab === "security" && <SecurityTab />}
           {activeTab === "proactivity" && <ProactivityTab />}
           {activeTab === "mcp" && <MCPTab />}
+          {activeTab === "vision" && <VisionTab apiBase="" token="" />}
         </Suspense>
       </div>
     </div>

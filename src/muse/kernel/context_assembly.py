@@ -115,6 +115,7 @@ class AssembledContext:
     emotional_context: str = ""  # Injected by orchestrator when relationship level permits
     include_mood_hint: bool = False  # Only True for user-facing inline responses
     language: str = ""  # User's preferred language (e.g. "Japanese", "Spanish")
+    attachments: list[dict] = field(default_factory=list)  # Multimodal: images/video frames
 
     # Token accounting
     system_tokens: int = 0
@@ -187,7 +188,27 @@ class AssembledContext:
                 "content": turn["content"],
             })
 
-        messages.append({"role": "user", "content": self.instruction})
+        # Final user message — multimodal if attachments are present
+        if self.attachments:
+            content_blocks: list[dict] = [
+                {"type": "text", "text": self.instruction},
+            ]
+            for att in self.attachments:
+                if att.get("type") == "image_base64":
+                    content_blocks.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{att.get('media_type', 'image/png')};base64,{att['data']}",
+                        },
+                    })
+                elif att.get("type") == "image_url":
+                    content_blocks.append({
+                        "type": "image_url",
+                        "image_url": {"url": att["url"]},
+                    })
+            messages.append({"role": "user", "content": content_blocks})
+        else:
+            messages.append({"role": "user", "content": self.instruction})
 
         return messages
 
@@ -244,9 +265,17 @@ class ContextAssembler:
         namespace: str | None = None,
         conversation_history: list[dict] | None = None,
         running_summary: str = "",
+        attachments: list[dict] | None = None,
     ) -> AssembledContext:
-        """Assemble a complete context for an LLM call."""
+        """Assemble a complete context for an LLM call.
+
+        *attachments* is an optional list of multimodal content to include
+        with the user instruction.  Each entry is a dict with ``type``
+        (``"image_base64"`` or ``"image_url"``) and the corresponding data.
+        """
         ctx = AssembledContext()
+        if attachments:
+            ctx.attachments = attachments
 
         # Zone 1: System instructions (from identity file + skills catalog)
         if self._skills_catalog:

@@ -254,6 +254,12 @@ class Orchestrator:
         # Background task scheduler
         self._scheduler = Scheduler(db, self)
 
+        # Desktop vision (screen streaming with local Gemma 4)
+        from muse.screen.manager import ScreenManager
+        self.screen_manager = ScreenManager(
+            model_router=model_router,
+        )
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -1199,12 +1205,27 @@ class Orchestrator:
         history = history_snapshot if history_snapshot is not None else self._conversation_history
 
         compaction_summary, compaction_recent = self._compaction.get_context_for_assembly(history)
+
+        # Inject visual context from screen streaming if active and a
+        # vision-capable model is available.
+        attachments = None
+        if self.screen_manager.is_streaming:
+            vision_model = await self._model_router.resolve_model(
+                task_override=intent.model_override,
+                required_capabilities=["vision"],
+            )
+            if vision_model:
+                attachments = self.screen_manager.get_visual_context(max_frames=1)
+                if attachments:
+                    model = vision_model  # Route to the vision model
+
         ctx = await self._context_assembler.assemble(
             instruction=user_message,
             query_embedding=query_embedding,
             model_context_window=context_window,
             conversation_history=compaction_recent,
             running_summary=compaction_summary,
+            attachments=attachments,
         )
 
         # Inject emotional context (gated by relationship level)
