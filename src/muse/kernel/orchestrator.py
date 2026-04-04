@@ -252,6 +252,11 @@ class Orchestrator:
         from muse.kernel.hooks import HookRegistry
         self._hooks = HookRegistry()
 
+        # Inline response handler
+        from muse.kernel.inline_handler import InlineHandler
+        self._inline_handler = InlineHandler(self._registry, self._session)
+        self._registry.register("inline_handler", self._inline_handler)
+
         # Proactive behavior manager
         from muse.kernel.proactivity import ProactivityManager
         self._proactivity = ProactivityManager(self)
@@ -1329,197 +1334,33 @@ class Orchestrator:
         precomputed_embedding: list[float] | None = None,
         session_id: str | None = None,
     ) -> AsyncIterator[dict]:
-        """Handle a message directly via LLM call."""
-        yield {"type": "thinking", "content": "Thinking..."}
-
-        query_embedding = precomputed_embedding or await self._embeddings.embed_async(user_message)
-
-        # Promote relevant data from disk → cache
-        await self._promotion.promote_disk_to_cache(query_embedding)
-
-        # Resolve model
-        model = await self._model_router.resolve_model(
-            task_override=intent.model_override
-        )
-        context_window = await self._model_router.get_context_window(model)
-
-        # Use the snapshot from when the user sent the message, not
-        # the live history which may include results from concurrent tasks.
-        history = history_snapshot if history_snapshot is not None else self._conversation_history
-
-        compaction_summary, compaction_recent = self._compaction.get_context_for_assembly(history)
-
-        # Inject visual context from screen streaming if active and a
-        # vision-capable model is available.
-        attachments = None
-        if self.screen_manager.is_streaming:
-            vision_model = await self._model_router.resolve_model(
-                task_override=intent.model_override,
-                required_capabilities=["vision"],
-            )
-            if vision_model:
-                attachments = self.screen_manager.get_visual_context(max_frames=1)
-                if attachments:
-                    model = vision_model  # Route to the vision model
-
-        ctx = await self._context_assembler.assemble(
-            instruction=user_message,
-            query_embedding=query_embedding,
-            model_context_window=context_window,
-            conversation_history=compaction_recent,
-            running_summary=compaction_summary,
-            attachments=attachments,
-        )
-
-        # Inject emotional context (gated by relationship level)
-        try:
-            rel = await self._emotions.compute_relationship_score()
-            emo_ctx = await self._emotions.get_emotional_context(rel["level"])
-            if emo_ctx:
-                ctx.emotional_context = emo_ctx
-        except Exception as e:
-            logger.debug("Emotional context injection skipped: %s", e)
-
-        # Mood hint only for inline (user-facing) responses — saves tokens
-        # on skill execution, classification, and planning calls.
-        ctx.include_mood_hint = True
-        ctx.language = self._user_language
-
-        messages = ctx.to_messages()
-
-        # Stream the response token-by-token
-        response_chunks: list[str] = []
-        tokens_in = 0
-        tokens_out = 0
-
-        try:
-            async for chunk in self._provider.stream_complete(
-                model=model,
-                messages=messages,
-                max_tokens=2000,
-            ):
-                if chunk.delta:
-                    response_chunks.append(chunk.delta)
-                    yield {
-                        "type": "response_chunk",
-                        "delta": chunk.delta,
-                    }
-                if chunk.done:
-                    tokens_in = chunk.tokens_in
-                    tokens_out = chunk.tokens_out
-        except (AttributeError, NotImplementedError):
-            # Provider doesn't support streaming — fall back
-            result = await self._provider.complete(
-                model=model, messages=messages, max_tokens=2000,
-            )
-            response_chunks = [result.text]
-            tokens_in = result.tokens_in
-            tokens_out = result.tokens_out
-
-        response_text = sanitize_response("".join(response_chunks))
-
-        # Extract and apply LLM-picked mood tag (e.g. [mood:curious])
-        response_text, llm_mood = extract_mood_tag(response_text)
-        if llm_mood:
-            await self.set_mood(llm_mood, force=True)
-        elif self._mood == "thinking":
-            await self.set_mood("neutral", force=True)
-
-        self.track_llm_usage(tokens_in, tokens_out)
-        _t = get_tracer()
-        _t.llm_call("inline_response", model,
-                     tokens_in=tokens_in, tokens_out=tokens_out)
-
-        # Only append to live conversation history if this task belongs
-        # to the current session.  Background tasks from other sessions
-        # must not pollute the active session's history.
-        if not session_id or session_id == self._session_id:
-            self._conversation_history.append({
-                "role": "assistant",
-                "content": response_text,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
-            await self._compaction.incremental_compact(self._conversation_history)
-
-        asyncio.create_task(self._persist_and_demote(
-            response_text, model,
-            tokens_in=tokens_in, tokens_out=tokens_out,
+        """Delegate to InlineHandler."""
+        async for event in self._inline_handler.handle(
+            user_message, intent,
+            history_snapshot=history_snapshot,
+            precomputed_embedding=precomputed_embedding,
             session_id=session_id,
-        ))
-
-        # Final complete response event (for clients that don't handle chunks)
-        yield {
-            "type": "response",
-            "content": response_text,
-            "tokens_in": tokens_in,
-            "tokens_out": tokens_out,
-            "model": model,
-        }
+        ):
+            yield event
 
     async def _persist_and_demote(
         self, response_text: str, model_used: str,
         tokens_in: int = 0, tokens_out: int = 0,
         session_id: str | None = None,
     ) -> None:
-        """Fire-and-forget: persist assistant response and extract facts."""
-        sid = session_id or self._session_id
-        try:
-            if sid:
-                msg_id = await self._session_repo.add_message(
-                    sid, "assistant", response_text,
-                    event_type="response",
-                    parent_id=self._branch_head_id,
-                    metadata={
-                        "model": model_used,
-                        "tokens_in": tokens_in,
-                        "tokens_out": tokens_out,
-                    },
-                )
-                if self._branch_head_id is not None:
-                    self._branch_head_id = msg_id
-            facts = await self._demotion.extract_facts(response_text)
-            if facts:
-                await self._demotion.demote_to_cache(facts)
-        except Exception as e:
-            logger.warning("Failed to persist/demote: %s", e)
-
-    # ------------------------------------------------------------------
-    # Identity editing (built-in virtual skill, handled inline)
-    # ------------------------------------------------------------------
+        """Delegate to InlineHandler."""
+        await self._inline_handler._persist_and_demote(
+            response_text, model_used,
+            tokens_in=tokens_in, tokens_out=tokens_out,
+            session_id=session_id,
+        )
 
     async def _handle_identity_edit(
         self, user_message: str,
     ) -> AsyncIterator[dict]:
-        """Handle identity change requests inline."""
-        yield {"type": "thinking", "content": "Updating identity..."}
-
-        model = await self._model_router.resolve_model()
-
-        async for event in handle_identity_edit(
-            user_message=user_message,
-            current_identity=self._identity,
-            provider=self._provider,
-            model=model,
-            config=self._config,
-        ):
+        """Delegate to InlineHandler."""
+        async for event in self._inline_handler.handle_identity_edit(user_message):
             yield event
-
-        # Reload the updated identity into the assembler
-        self._identity = load_identity(self._config)
-        self._context_assembler._identity = self._identity
-
-        # Record in conversation history (in-memory + persistent)
-        identity_msg = f"[Identity updated per user request: {user_message}]"
-        self._conversation_history.append({
-            "role": "assistant",
-            "content": identity_msg,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-        await self._compaction.incremental_compact(self._conversation_history)
-        if self._session_id:
-            await self._session_repo.add_message(
-                self._session_id, "assistant", identity_msg, event_type="response",
-            )
 
     # ------------------------------------------------------------------
     # Skill authoring (built-in virtual skill, handled inline)
