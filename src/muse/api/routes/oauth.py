@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from muse.api.app import get_orchestrator
+from muse.api.app import get_orchestrator, get_service
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ async def start_flow(provider: str, scopes: str | None = None):
         return HTMLResponse("<h2>MUSE is not running.</h2>", status_code=503)
 
     # Load client_id from user_settings
-    db = orchestrator._db
+    db = get_service("db")
     key = f"oauth.{provider}.client_id"
     async with db.execute(
         "SELECT value FROM user_settings WHERE key = ?", (key,)
@@ -64,7 +64,7 @@ async def start_flow(provider: str, scopes: str | None = None):
         scope_groups = list(prov_config.scopes.keys())
 
     try:
-        auth_url, state = orchestrator._oauth_manager.start_flow(
+        auth_url, state = get_service("oauth_manager").start_flow(
             provider_name=provider,
             scope_groups=scope_groups,
             client_id=client_id,
@@ -96,7 +96,7 @@ async def oauth_callback(code: str, state: str, request: Request):
         )
 
     try:
-        credential_id = await orchestrator._oauth_manager.complete_flow(
+        credential_id = await get_service("oauth_manager").complete_flow(
             code=code,
             state=state,
         )
@@ -128,4 +128,4 @@ async def oauth_status(provider: str):
     if not orchestrator:
         return {"configured": False}
 
-    return await orchestrator._oauth_manager.get_status(provider)
+    return await get_service("oauth_manager").get_status(provider)

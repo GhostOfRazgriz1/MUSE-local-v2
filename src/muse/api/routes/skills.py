@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter
 
-from muse.api.app import get_orchestrator
+from muse.api.app import get_orchestrator, get_service
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ async def list_skills():
     if not orchestrator:
         return {"skills": []}
 
-    installed = await orchestrator._skill_loader.get_installed()
+    installed = await get_service("skill_loader").get_installed()
 
     # Enrich each skill with active permission grants
     skills = []
@@ -31,7 +31,7 @@ async def list_skills():
         # Collect active grants for this skill
         granted_perms: list[str] = []
         try:
-            grants = await orchestrator._permissions.permission_repo.get_active_grants(
+            grants = await get_service("permissions").permission_repo.get_active_grants(
                 skill_id,
             )
             granted_perms = [g["permission"] for g in grants]
@@ -67,7 +67,7 @@ async def get_skill(skill_id: str):
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"error": "Not ready"}
-    manifest = await orchestrator._skill_loader.get_manifest(skill_id)
+    manifest = await get_service("skill_loader").get_manifest(skill_id)
     if not manifest:
         return {"error": "Skill not found"}
     return {"skill": manifest.to_dict()}
@@ -80,7 +80,7 @@ async def get_skill_settings(skill_id: str):
     if not orchestrator:
         return {"error": "Not ready"}
 
-    manifest = await orchestrator._skill_loader.get_manifest(skill_id)
+    manifest = await get_service("skill_loader").get_manifest(skill_id)
     if not manifest:
         return {"error": "Skill not found"}
 
@@ -89,7 +89,7 @@ async def get_skill_settings(skill_id: str):
         # Check if this credential is already stored in the vault
         configured = False
         try:
-            secret = await orchestrator._vault.retrieve(spec.id)
+            secret = await get_service("vault").retrieve(spec.id)
             configured = bool(secret)
         except Exception as e:
             logger.debug("Failed to check credential %s: %s", spec.id, e)
@@ -109,7 +109,7 @@ async def store_skill_credential(skill_id: str, body: dict):
     if not orchestrator:
         return {"error": "Not ready"}
 
-    manifest = await orchestrator._skill_loader.get_manifest(skill_id)
+    manifest = await get_service("skill_loader").get_manifest(skill_id)
     if not manifest:
         return {"error": "Skill not found"}
 
@@ -123,7 +123,7 @@ async def store_skill_credential(skill_id: str, body: dict):
     if credential_id not in valid_ids:
         return {"error": f"Credential '{credential_id}' not declared by this skill"}
 
-    await orchestrator._vault.store(
+    await get_service("vault").store(
         credential_id=credential_id,
         secret=secret,
         credential_type=body.get("type", "api_key"),
@@ -138,7 +138,7 @@ async def delete_skill_credential(skill_id: str, credential_id: str):
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"error": "Not ready"}
-    await orchestrator._vault.delete(credential_id)
+    await get_service("vault").delete(credential_id)
     return {"status": "deleted", "id": credential_id}
 
 
@@ -148,8 +148,8 @@ async def uninstall_skill(skill_id: str):
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"error": "Not ready"}
-    await orchestrator._skill_loader.uninstall(skill_id)
-    await orchestrator._permissions.permission_repo.revoke_all_for_skill(skill_id)
+    await get_service("skill_loader").uninstall(skill_id)
+    await get_service("permissions").permission_repo.revoke_all_for_skill(skill_id)
     await orchestrator._rebuild_skills_catalog()
     return {"status": "uninstalled", "skill_id": skill_id}
 
@@ -166,7 +166,7 @@ async def get_skill_defaults():
         return {"defaults": {}}
 
     # Collect all categories from installed skills
-    installed = await orchestrator._skill_loader.get_installed()
+    installed = await get_service("skill_loader").get_installed()
     categories: dict[str, list[dict]] = {}
     for skill in installed:
         m = skill.get("manifest", {})
@@ -181,7 +181,7 @@ async def get_skill_defaults():
     defaults: dict[str, str] = {}
     for cat in categories:
         try:
-            async with orchestrator._db.execute(
+            async with get_service("db").execute(
                 "SELECT value FROM user_settings WHERE key = ?",
                 (f"skill_default.{cat}",),
             ) as cursor:
@@ -208,13 +208,13 @@ async def set_skill_default(category: str, body: dict):
 
     if not skill_id:
         # Clear the preference
-        await orchestrator._db.execute(
+        await get_service("db").execute(
             "DELETE FROM user_settings WHERE key = ?", (key,)
         )
     else:
-        await orchestrator._db.execute(
+        await get_service("db").execute(
             "INSERT OR REPLACE INTO user_settings (key, value, updated_at) VALUES (?, ?, ?)",
             (key, skill_id, now),
         )
-    await orchestrator._db.commit()
+    await get_service("db").commit()
     return {"category": category, "skill_id": skill_id or None}

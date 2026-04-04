@@ -6,7 +6,7 @@ import json
 
 from fastapi import APIRouter
 
-from muse.api.app import get_orchestrator
+from muse.api.app import get_orchestrator, get_service
 
 router = APIRouter(prefix="/permissions", tags=["permissions"])
 
@@ -17,7 +17,7 @@ async def list_permissions():
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"grants": []}
-    grants = await orchestrator._permissions.permission_repo.get_all_grants()
+    grants = await get_service("permissions").permission_repo.get_all_grants()
     return {"grants": grants}
 
 
@@ -28,7 +28,7 @@ async def pending_requests():
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"requests": []}
-    return {"requests": await orchestrator._permissions.get_pending_requests()}
+    return {"requests": await get_service("permissions").get_pending_requests()}
 
 
 @router.get("/audit")
@@ -37,7 +37,7 @@ async def audit_log(limit: int = 50):
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"entries": []}
-    entries = await orchestrator._audit.get_recent(limit)
+    entries = await get_service("audit").get_recent(limit)
     return {"entries": entries}
 
 
@@ -47,7 +47,7 @@ async def trust_budgets():
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"budgets": []}
-    budgets = await orchestrator._trust_budget.get_all_budgets()
+    budgets = await get_service("trust_budget").get_all_budgets()
     return {"budgets": budgets}
 
 
@@ -57,7 +57,7 @@ async def set_budget(body: dict):
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"error": "Not ready"}
-    await orchestrator._trust_budget.set_budget(
+    await get_service("trust_budget").set_budget(
         permission=body["permission"],
         max_actions=body.get("max_actions"),
         max_tokens=body.get("max_tokens"),
@@ -99,7 +99,7 @@ async def list_approved_directories():
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"directories": []}
-    entry = await orchestrator._memory_repo.get("Files", "config.approved_directories")
+    entry = await get_service("memory_repo").get("Files", "config.approved_directories")
     if entry and entry.get("value"):
         try:
             dirs = json.loads(entry["value"])
@@ -116,12 +116,12 @@ async def revoke_directory(body: dict):
     if not orchestrator:
         return {"error": "Not ready"}
     path = body.get("path", "")
-    entry = await orchestrator._memory_repo.get("Files", "config.approved_directories")
+    entry = await get_service("memory_repo").get("Files", "config.approved_directories")
     if entry and entry.get("value"):
         try:
             dirs = json.loads(entry["value"])
             dirs = [d for d in dirs if d != path]
-            await orchestrator._memory_repo.put(
+            await get_service("memory_repo").put(
                 "Files", "config.approved_directories",
                 json.dumps(dirs), value_type="json",
             )
@@ -138,7 +138,7 @@ async def skill_permissions(skill_id: str):
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"grants": []}
-    grants = await orchestrator._permissions.permission_repo.get_active_grants(skill_id)
+    grants = await get_service("permissions").permission_repo.get_active_grants(skill_id)
     return {"grants": grants}
 
 
@@ -148,7 +148,7 @@ async def revoke_permission(skill_id: str, permission: str):
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"error": "Not ready"}
-    await orchestrator._permissions.permission_repo.revoke(skill_id, permission)
+    await get_service("permissions").permission_repo.revoke(skill_id, permission)
     return {"status": "revoked", "skill_id": skill_id, "permission": permission}
 
 
@@ -158,5 +158,5 @@ async def revoke_permission_delete(skill_id: str, permission: str):
     orchestrator = get_orchestrator()
     if not orchestrator:
         return {"error": "Not ready"}
-    await orchestrator._permissions.permission_repo.revoke(skill_id, permission)
+    await get_service("permissions").permission_repo.revoke(skill_id, permission)
     return {"status": "revoked", "skill_id": skill_id, "permission": permission}

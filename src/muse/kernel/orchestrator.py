@@ -224,6 +224,8 @@ class Orchestrator:
         self._registry.register("session_repo", self._session_repo)
         self._registry.register("event_bus", self._event_bus)
         self._registry.register("session", self._session)
+        if oauth_manager:
+            self._registry.register("oauth_manager", oauth_manager)
         if mcp_manager:
             self._registry.register("mcp_manager", mcp_manager)
 

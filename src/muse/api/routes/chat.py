@@ -7,7 +7,7 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
-from muse.api.app import get_orchestrator
+from muse.api.app import get_orchestrator, get_service
 from muse.api.auth import require_ws_token
 from muse.debug import get_tracer
 
@@ -78,7 +78,7 @@ async def chat_websocket(
 
     # Store the user's timezone for time-aware features
     if tz:
-        orchestrator._user_tz = tz
+        get_service("session").user_tz = tz
 
     # ------------------------------------------------------------------
     # Session bootstrap
@@ -122,11 +122,11 @@ async def chat_websocket(
         await websocket.send_json({
             "type": "session_started",
             "session_id": session_id,
-            "branch_head_id": orchestrator._branch_head_id,
+            "branch_head_id": get_service("session").branch_head_id,
         })
 
         messages = await orchestrator.session_repo.get_messages(
-            session_id, branch_head_id=orchestrator._branch_head_id,
+            session_id, branch_head_id=get_service("session").branch_head_id,
         )
         if messages:
             await websocket.send_json({
@@ -298,7 +298,7 @@ async def chat_websocket(
                 # starts.  The generator is lazy; by the time it executes,
                 # the user may have switched sessions and the orchestrator's
                 # _conversation_history points to a different session.
-                history_snap = list(orchestrator._conversation_history)
+                history_snap = list(get_service("session").conversation_history)
                 orchestrator.run_in_background(
                     orchestrator.handle_message(
                         content,
@@ -312,7 +312,7 @@ async def chat_websocket(
                 last_user_msg = orchestrator.get_last_user_message()
                 if last_user_msg:
                     await _ensure_session()
-                    history_snap = list(orchestrator._conversation_history)
+                    history_snap = list(get_service("session").conversation_history)
                     orchestrator.run_in_background(
                         orchestrator.handle_message(
                             last_user_msg,

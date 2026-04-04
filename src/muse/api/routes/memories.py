@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
-from muse.api.app import get_orchestrator
+from muse.api.app import get_orchestrator, get_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["memories"])
@@ -74,7 +74,7 @@ async def list_memories(
     if not orchestrator:
         raise HTTPException(503, "Orchestrator not ready")
 
-    repo = orchestrator._memory_repo
+    repo = get_service("memory_repo")
     if namespace:
         entries = await repo.get_by_relevance(namespace=namespace, limit=limit, min_score=0.0)
     else:
@@ -102,7 +102,7 @@ async def memory_stats():
     if not orchestrator:
         raise HTTPException(503, "Orchestrator not ready")
 
-    repo = orchestrator._memory_repo
+    repo = get_service("memory_repo")
     total = await repo.count_entries()
 
     # Count per consumer-visible namespace.
@@ -118,7 +118,7 @@ async def memory_stats():
         "progress": 0.0, "capabilities": [], "next_capabilities": [],
     }
     try:
-        relationship = await orchestrator._emotions.compute_relationship_score()
+        relationship = await get_service("emotions").compute_relationship_score()
     except Exception as e:
         logger.debug("Failed to compute relationship score: %s", e)
 
@@ -151,7 +151,7 @@ async def add_memory(body: dict):
     # Generate a stable key from the first ~60 chars of the value.
     key = value[:60].lower().replace(" ", "_").replace(".", "")
 
-    repo = orchestrator._memory_repo
+    repo = get_service("memory_repo")
     entry = await repo.put(namespace, key, value)
     return _entry_to_item(entry)
 
@@ -170,7 +170,7 @@ async def delete_memory(namespace: str, key: str):
     if namespace not in _DELETABLE_NS:
         raise HTTPException(403, "Cannot delete from this namespace")
 
-    repo = orchestrator._memory_repo
+    repo = get_service("memory_repo")
     existing = await repo.get(namespace, key)
     if not existing:
         raise HTTPException(404, "Memory not found")
@@ -178,7 +178,7 @@ async def delete_memory(namespace: str, key: str):
 
     # Invalidate relationship score cache since memory counts changed.
     try:
-        orchestrator._emotions._cached_score = None
+        get_service("emotions")._cached_score = None
     except AttributeError:
         pass
 

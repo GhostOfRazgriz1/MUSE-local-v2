@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
-from muse.api.app import get_orchestrator
+from muse.api.app import get_orchestrator, get_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["sessions"])
@@ -80,9 +80,9 @@ async def delete_session(
 
     await orchestrator.session_repo.delete_session(session_id)
     # If we just deleted the active session, clear it
-    if orchestrator._session_id == session_id:
-        orchestrator._session_id = None
-        orchestrator._conversation_history = []
+    if get_service("session").session_id == session_id:
+        get_service("session").session_id = None
+        get_service("session").conversation_history = []
     return {"ok": True, "memories_deleted": memories_deleted}
 
 

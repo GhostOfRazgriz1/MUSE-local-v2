@@ -23,6 +23,18 @@ def get_orchestrator():
     return _orchestrator
 
 
+def get_service(name: str):
+    """Look up a service by name from the orchestrator's registry.
+
+    Convenience helper for API routes to avoid ``orchestrator._X``
+    access patterns.  Returns None if orchestrator isn't ready.
+    """
+    orch = _orchestrator
+    if orch is None:
+        return None
+    return orch.registry.get(name)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle — start and stop the orchestrator."""

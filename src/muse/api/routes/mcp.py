@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from muse.api.app import get_orchestrator
+from muse.api.app import get_orchestrator, get_service
 from muse.mcp.config import MCPServerConfig
 
 logger = logging.getLogger(__name__)
@@ -17,9 +17,9 @@ def _get_manager():
     orchestrator = get_orchestrator()
     if not orchestrator:
         raise HTTPException(503, "Orchestrator not ready")
-    if not orchestrator._mcp_manager:
+    if not get_service("mcp_manager"):
         raise HTTPException(503, "MCP support not available")
-    return orchestrator._mcp_manager, orchestrator
+    return get_service("mcp_manager"), orchestrator
 
 
 @router.get("/servers")
@@ -118,7 +118,7 @@ async def delete_server(server_id: str):
         raise HTTPException(404, f"Server '{server_id}' not found")
 
     # Unregister from classifier
-    orchestrator._classifier.unregister_skill(f"mcp:{server_id}")
+    get_service("classifier").unregister_skill(f"mcp:{server_id}")
 
     await manager.remove_server(server_id)
     await orchestrator._rebuild_skills_catalog()
@@ -150,7 +150,7 @@ async def disconnect_server(server_id: str):
     """Manually disconnect an MCP server."""
     manager, orchestrator = _get_manager()
     await manager.disconnect(server_id)
-    orchestrator._classifier.unregister_skill(f"mcp:{server_id}")
+    get_service("classifier").unregister_skill(f"mcp:{server_id}")
     await orchestrator._rebuild_skills_catalog()
     return {"status": "disconnected"}
 
