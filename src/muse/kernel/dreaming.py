@@ -39,10 +39,16 @@ class DreamingManager:
 
     def __init__(
         self,
-        orchestrator,
+        orchestrator_or_registry,
         idle_threshold: int = DEFAULT_IDLE_THRESHOLD,
     ):
-        self._orch = orchestrator
+        from muse.kernel.service_registry import ServiceRegistry
+        if isinstance(orchestrator_or_registry, ServiceRegistry):
+            self._orch = None
+            self._registry = orchestrator_or_registry
+        else:
+            self._orch = orchestrator_or_registry
+            self._registry = getattr(orchestrator_or_registry, '_registry', None)
         self._idle_threshold = idle_threshold
         self._last_activity: float = 0.0
         self._running = False
@@ -76,13 +82,13 @@ class DreamingManager:
             if elapsed < self._idle_threshold:
                 continue
 
-            session_id = self._orch._session_id
+            session_id = self._registry.get("session").session_id
             if not session_id:
                 continue
             if session_id in self._consolidated_sessions:
                 continue
 
-            history = self._orch._conversation_history
+            history = self._registry.get("session").conversation_history
             if len(history) < MIN_TURNS_FOR_CONSOLIDATION:
                 continue
 
@@ -92,10 +98,10 @@ class DreamingManager:
                                turns=len(history),
                                idle_seconds=round(elapsed))
 
-            await self._orch.set_mood("dreaming", force=True)
+            await self._registry.get("kernel").set_mood("dreaming", force=True)
             try:
                 # Flush usage patterns to disk before consolidation
-                await self._orch._patterns.flush()
+                await self._registry.get("patterns").flush()
 
                 await self._consolidate(session_id, history)
                 await self._analyze_patterns()
@@ -104,7 +110,7 @@ class DreamingManager:
                 logger.error("Memory consolidation failed: %s", e, exc_info=True)
                 get_tracer().error("dreaming", f"Consolidation failed: {e}")
             finally:
-                await self._orch.set_mood("resting", force=True)
+                await self._registry.get("kernel").set_mood("resting", force=True)
 
     async def _consolidate(
         self, session_id: str, history: list[dict],
@@ -119,11 +125,11 @@ class DreamingManager:
             f"{t['role']}: {t['content']}" for t in history
         )
 
-        model = await self._orch._model_router.resolve_model()
+        model = await self._registry.get("model_router").resolve_model()
 
         # ── Run memory extraction + session summary in parallel ──
         # Both read conv_text independently; no dependency between them.
-        extract_task = self._orch._provider.complete(
+        extract_task = self._registry.get("provider").complete(
             model=model,
             messages=[
                 {"role": "system", "content": (
@@ -161,7 +167,7 @@ class DreamingManager:
             max_tokens=1500,
         )
 
-        summary_task = self._orch._provider.complete(
+        summary_task = self._registry.get("provider").complete(
             model=model,
             messages=[
                 {"role": "system", "content": (
@@ -215,13 +221,13 @@ class DreamingManager:
         # Run demotion + summary storage concurrently
         async def _store_memories():
             if facts:
-                inserted = await self._orch._demotion.demote_to_cache(facts)
-                await self._orch._demotion.flush_cache_to_disk()
+                inserted = await self._registry.get("demotion").demote_to_cache(facts)
+                await self._registry.get("demotion").flush_cache_to_disk()
                 return inserted
             return []
 
         async def _store_summary():
-            await self._orch._memory_repo.put(
+            await self._registry.get("memory_repo").put(
                 namespace="_conversation",
                 key=f"session_{timestamp}",
                 value=session_summary,
@@ -236,7 +242,7 @@ class DreamingManager:
 
         # Save compaction checkpoint
         try:
-            await self._orch._compaction._save_checkpoint_async()
+            await self._registry.get("compaction")._save_checkpoint_async()
         except Exception as exc:
             logger.debug("Dreaming: compaction checkpoint skipped: %s", exc)
 
@@ -262,13 +268,13 @@ class DreamingManager:
         import json
         import re
 
-        pattern_summary = self._orch._patterns.summarize_recent()
+        pattern_summary = self._registry.get("patterns").summarize_recent()
         if "No recent activity" in pattern_summary:
             return
 
         # Also get historical patterns if available
         try:
-            history = await self._orch._patterns.get_history(days=7)
+            history = await self._registry.get("patterns").get_history(days=7)
         except Exception:
             history = []
 
@@ -285,10 +291,10 @@ class DreamingManager:
                 f"Active days: {dict(weekdays.most_common(3))}"
             )
 
-        model = await self._orch._model_router.resolve_model()
+        model = await self._registry.get("model_router").resolve_model()
 
         try:
-            result = await self._orch._provider.complete(
+            result = await self._registry.get("provider").complete(
                 model=model,
                 messages=[
                     {"role": "system", "content": (
@@ -328,7 +334,7 @@ class DreamingManager:
             suggestions = [s for s in suggestions if s.get("confidence", 0) >= 0.5]
 
             if suggestions:
-                await self._orch._memory_repo.put(
+                await self._registry.get("memory_repo").put(
                     namespace="_patterns",
                     key="suggestions",
                     value=json.dumps(suggestions),

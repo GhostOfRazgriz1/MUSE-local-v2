@@ -35,9 +35,15 @@ MIN_INTERVAL_SECONDS = 300
 class Scheduler:
     """Runs skills on a recurring schedule."""
 
-    def __init__(self, db: aiosqlite.Connection, orchestrator):
+    def __init__(self, db: aiosqlite.Connection, orchestrator_or_registry):
         self._db = db
-        self._orch = orchestrator
+        from muse.kernel.service_registry import ServiceRegistry
+        if isinstance(orchestrator_or_registry, ServiceRegistry):
+            self._orch = None
+            self._registry = orchestrator_or_registry
+        else:
+            self._orch = orchestrator_or_registry
+            self._registry = getattr(orchestrator_or_registry, '_registry', None)
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -182,7 +188,7 @@ class Scheduler:
             )
 
             result_summary = ""
-            async for event in self._orch._execute_sub_task(
+            async for event in self._registry.get("kernel")._execute_sub_task(
                 skill_id=skill_id,
                 instruction=instruction,
                 intent=intent,
@@ -204,7 +210,7 @@ class Scheduler:
             await self._db.commit()
 
             # Store result in memory for the agent to reference
-            await self._orch._memory_repo.put(
+            await self._registry.get("memory_repo").put(
                 namespace="_scheduled",
                 key=f"{skill_id}_{now.strftime('%Y%m%d_%H%M')}",
                 value=result_summary[:500],
@@ -241,12 +247,12 @@ class Scheduler:
         """
         now = datetime.now(timezone.utc)
 
-        keys = await self._orch._memory_repo.list_keys("Reminders", prefix="reminder.")
+        keys = await self._registry.get("memory_repo").list_keys("Reminders", prefix="reminder.")
         if not keys:
             return
 
         for key in keys:
-            entry = await self._orch._memory_repo.get("Reminders", key)
+            entry = await self._registry.get("memory_repo").get("Reminders", key)
             if not entry:
                 continue
 
@@ -280,7 +286,7 @@ class Scheduler:
             get_tracer().event("scheduler", "reminder_fired", key=key, what=what)
 
             # Emit notification to all connected clients
-            await self._orch._emit_event({
+            await self._registry.get("event_bus").emit({
                 "type": "reminder",
                 "content": f"Reminder: {what}",
                 "key": key,
@@ -291,6 +297,6 @@ class Scheduler:
             # Mark as fired so it doesn't trigger again
             data["status"] = "fired"
             data["fired_at"] = now.isoformat()
-            await self._orch._memory_repo.put(
+            await self._registry.get("memory_repo").put(
                 "Reminders", key, json.dumps(data), value_type="json",
             )

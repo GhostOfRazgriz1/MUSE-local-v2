@@ -63,8 +63,14 @@ MAX_SESSION_DISMISSALS = 2
 class ProactivityManager:
     """Coordinates all proactive agent behavior."""
 
-    def __init__(self, orchestrator):
-        self._orch = orchestrator
+    def __init__(self, orchestrator_or_registry):
+        from muse.kernel.service_registry import ServiceRegistry
+        if isinstance(orchestrator_or_registry, ServiceRegistry):
+            self._orch = None
+            self._registry = orchestrator_or_registry
+        else:
+            self._orch = orchestrator_or_registry
+            self._registry = getattr(orchestrator_or_registry, '_registry', None)
         self._running = False
 
         # Budget tracking (resets daily)
@@ -122,7 +128,7 @@ class ProactivityManager:
         for key, default in DEFAULTS.items():
             short = key.split(".", 1)[1]
             try:
-                async with self._orch._db.execute(
+                async with self._registry.get("db").execute(
                     "SELECT value FROM user_settings WHERE key = ?", (key,)
                 ) as cursor:
                     row = await cursor.fetchone()
@@ -144,7 +150,7 @@ class ProactivityManager:
     async def _get_relationship_level(self) -> int:
         """Get the current relationship level (1-4)."""
         try:
-            rel = await self._orch._emotions.compute_relationship_score()
+            rel = await self._registry.get("emotions").compute_relationship_score()
             return rel.get("level", 1)
         except Exception:
             return 1
@@ -162,7 +168,7 @@ class ProactivityManager:
             return False
 
         # Suppress during onboarding
-        if self._orch._onboarding and self._orch._onboarding.is_active:
+        if self._registry.get("kernel")._onboarding and self._registry.get("kernel")._onboarding.is_active:
             return False
 
         # Gate on relationship level
@@ -215,37 +221,34 @@ class ProactivityManager:
 
         # Build a compact skill catalog — only the current skill + common
         # follow-ups. Saves ~200-300 tokens vs. the full catalog.
-        all_skills = self._orch._classifier._skills
+        all_skills = self._registry.get("classifier")._skills
         _COMMON_FOLLOW_UPS = {"Files", "Notes", "Search", "Reminders", "Email"}
         relevant_ids = {skill_id} | _COMMON_FOLLOW_UPS
         skill_catalog = "\n".join(
             f"  - {sid}: {info['description']}"
             for sid, info in all_skills.items()
             if sid in relevant_ids
-        ) or self._orch._classifier._cached_skill_lines
+        ) or self._registry.get("classifier")._cached_skill_lines
 
-        model = await self._orch._model_router.resolve_model()
+        model = await self._registry.get("model_router").resolve_model()
 
         try:
-            result = await self._orch._provider.complete(
+            result = await self._registry.get("provider").complete(
                 model=model,
                 messages=[
-                    {"role": "system", "content": (
-                        "You are a proactive assistant. The user just completed a task. "
-                        "Based on the result, suggest ONE natural follow-up action they "
-                        "might want to take. Keep it brief (one sentence).\n\n"
-                        f"Available skills:\n{skill_catalog}\n\n"
-                        "Reply with JSON: {\"suggestion\": \"...\", \"skill_id\": \"...\"}\n"
-                        "If no useful follow-up exists, reply: {\"suggestion\": null}\n"
-                        "Reply with ONLY JSON."
-                    )},
                     {"role": "user", "content": (
-                        f"Completed: {skill_id}"
+                        f"Task done: {skill_id}"
                         f"{('.' + action) if action else ''}\n"
-                        f"Result: {result_summary[:500]}"
+                        f"Result: {result_summary[:300]}\n\n"
+                        f"Skills:\n{skill_catalog}\n\n"
+                        "Suggest ONE follow-up or null.\n"
+                        "JSON only:\n"
+                        '{"suggestion":"...","skill_id":"..."}\n'
+                        'or {"suggestion":null}'
                     )},
                 ],
-                max_tokens=150,
+                system="Suggest a follow-up action. Reply with ONLY valid JSON.",
+                max_tokens=100,
             )
 
             raw = result.text.strip()
@@ -282,18 +285,18 @@ class ProactivityManager:
             return None
 
         # Gather context
-        pattern_summary = self._orch._patterns.summarize_recent()
-        now = self._orch.user_now()
-        tz_name = self._orch._user_tz
+        pattern_summary = self._registry.get("patterns").summarize_recent()
+        now = self._registry.get("kernel").user_now()
+        tz_name = self._registry.get("session").user_tz
         time_ctx = f"Current time: {now.strftime('%A, %H:%M')} ({tz_name})"
 
         # Check for pending reminders
         reminder_ctx = ""
         try:
-            keys = await self._orch._memory_repo.list_keys("Reminders", prefix="reminder.")
+            keys = await self._registry.get("memory_repo").list_keys("Reminders", prefix="reminder.")
             active = []
             for key in keys[:5]:
-                entry = await self._orch._memory_repo.get("Reminders", key)
+                entry = await self._registry.get("memory_repo").get("Reminders", key)
                 if entry:
                     try:
                         data = json.loads(entry["value"])
@@ -309,36 +312,33 @@ class ProactivityManager:
         # Get user profile
         profile_ctx = ""
         try:
-            profile_keys = await self._orch._memory_repo.list_keys("_profile")
+            profile_keys = await self._registry.get("memory_repo").list_keys("_profile")
             for key in profile_keys[:5]:
-                entry = await self._orch._memory_repo.get("_profile", key)
+                entry = await self._registry.get("memory_repo").get("_profile", key)
                 if entry and entry.get("value"):
                     profile_ctx += f"\n{key}: {entry['value']}"
         except Exception as e:
             logger.debug("Failed to fetch profile for nudge: %s", e)
 
-        skill_catalog = self._orch._classifier._cached_skill_lines
-        model = await self._orch._model_router.resolve_model()
+        skill_catalog = self._registry.get("classifier")._cached_skill_lines
+        model = await self._registry.get("model_router").resolve_model()
 
         try:
-            result = await self._orch._provider.complete(
+            result = await self._registry.get("provider").complete(
                 model=model,
                 messages=[
-                    {"role": "system", "content": (
-                        "You are a proactive personal assistant. The user is connected "
-                        "but idle. Based on the context, suggest ONE helpful action.\n\n"
-                        f"Available skills:\n{skill_catalog}\n\n"
-                        "Reply with JSON: {\"message\": \"...\", \"skill_id\": \"...\", "
-                        "\"type\": \"remind|optimize|inform\"}\n"
-                        "If nothing useful to suggest, reply: {\"message\": null}\n"
-                        "Be specific and actionable. Reply with ONLY JSON."
-                    )},
                     {"role": "user", "content": (
                         f"{time_ctx}\n{pattern_summary}"
-                        f"{reminder_ctx}{profile_ctx}"
+                        f"{reminder_ctx}{profile_ctx}\n\n"
+                        f"Skills:\n{skill_catalog}\n\n"
+                        "Suggest ONE action or null.\n"
+                        "JSON only:\n"
+                        '{"message":"...","skill_id":"...","type":"remind"}\n'
+                        'or {"message":null}'
                     )},
                 ],
-                max_tokens=150,
+                system="Suggest a helpful action. Reply with ONLY valid JSON.",
+                max_tokens=100,
             )
 
             raw = result.text.strip()
@@ -377,7 +377,7 @@ class ProactivityManager:
 
             try:
                 # Must have a connected client
-                if not self._orch._event_listeners:
+                if not self._registry.get("event_bus").subscribers:
                     continue
 
                 # Don't pile up — wait for the previous suggestion to be acknowledged
@@ -389,7 +389,7 @@ class ProactivityManager:
                     continue
 
                 # Must be idle long enough
-                idle_seconds = time.monotonic() - self._orch._dreaming._last_activity
+                idle_seconds = time.monotonic() - self._registry.get("dreaming")._last_activity
                 if idle_seconds < IDLE_NUDGE_THRESHOLD:
                     continue
 
@@ -402,7 +402,7 @@ class ProactivityManager:
                 if nudge:
                     self._pending_suggestion = True
                     self._last_suggestion_time = time.monotonic()
-                    await self._orch._emit_event({
+                    await self._registry.get("event_bus").emit({
                         "type": "suggestion",
                         "content": nudge["message"],
                         "suggestion_id": nudge["id"],
@@ -424,12 +424,12 @@ class ProactivityManager:
         if not allowed_skills:
             return []
 
-        pattern_summary = self._orch._patterns.summarize_recent()
-        now = self._orch.user_now()
+        pattern_summary = self._registry.get("patterns").summarize_recent()
+        now = self._registry.get("kernel").user_now()
 
         # Build context about what the agent could do
-        skill_catalog = self._orch._classifier._cached_skill_lines
-        model = await self._orch._model_router.resolve_model()
+        skill_catalog = self._registry.get("classifier")._cached_skill_lines
+        model = await self._registry.get("model_router").resolve_model()
 
         # Escape skill names to prevent prompt injection via skill IDs.
         safe_allowed = ", ".join(
@@ -438,29 +438,22 @@ class ProactivityManager:
         )
 
         try:
-            result = await self._orch._provider.complete(
+            result = await self._registry.get("provider").complete(
                 model=model,
                 messages=[
-                    {"role": "system", "content": (
-                        "You are deciding if the AI agent should take an autonomous "
-                        "background action. The user has explicitly allowed these "
-                        f"skills to run autonomously: {safe_allowed}\n\n"
-                        f"Available skills:\n{skill_catalog}\n\n"
-                        "Based on the time and context, suggest 0-2 actions. Each:\n"
-                        "{\"skill_id\": \"...\", \"instruction\": \"...\", "
-                        "\"reason\": \"why this is useful now\"}\n\n"
-                        "Only suggest actions from the allowed list. "
-                        "Only suggest if there's a clear reason (time-based, "
-                        "pattern-based, or information that would become stale).\n\n"
-                        "Reply with a JSON array. Empty array if nothing useful."
-                    )},
                     {"role": "user", "content": (
-                        f"Time: {now.strftime('%A %H:%M')} ({self._orch._user_tz})\n"
+                        f"Time: {now.strftime('%A %H:%M')} ({self._registry.get("session").user_tz})\n"
                         f"Patterns: {pattern_summary}\n"
-                        f"Allowed skills: {safe_allowed}"
+                        f"Allowed: {safe_allowed}\n\n"
+                        f"Skills:\n{skill_catalog}\n\n"
+                        "Suggest 0-2 autonomous actions from the allowed list.\n"
+                        "JSON array:\n"
+                        '[{"skill_id":"...","instruction":"...","reason":"..."}]\n'
+                        "or [] if nothing useful."
                     )},
                 ],
-                max_tokens=300,
+                system="Suggest autonomous actions. Reply with ONLY a valid JSON array.",
+                max_tokens=200,
             )
 
             raw = result.text.strip()
@@ -500,7 +493,7 @@ class ProactivityManager:
 
         result_summary = ""
         try:
-            async for event in self._orch._execute_sub_task(
+            async for event in self._registry.get("kernel")._execute_sub_task(
                 skill_id=skill_id,
                 instruction=instruction,
                 intent=intent,
@@ -525,7 +518,7 @@ class ProactivityManager:
                 break
 
             try:
-                if not self._orch._event_listeners:
+                if not self._registry.get("event_bus").subscribers:
                     continue
 
                 opportunities = await self.check_autonomous_opportunities()
@@ -536,7 +529,7 @@ class ProactivityManager:
                     result = await self.execute_autonomous(
                         opp["skill_id"], opp["instruction"], opp.get("reason", ""),
                     )
-                    await self._orch._emit_event({
+                    await self._registry.get("event_bus").emit({
                         "type": "autonomous_action",
                         "skill_id": opp["skill_id"],
                         "reason": opp.get("reason", ""),
@@ -553,7 +546,7 @@ class ProactivityManager:
         self._pending_suggestion = False
         try:
             key = f"feedback.{suggestion_id}"
-            await self._orch._memory_repo.put(
+            await self._registry.get("memory_repo").put(
                 namespace="_patterns",
                 key=key,
                 value=json.dumps({
@@ -610,8 +603,8 @@ class ProactivityManager:
             return self._cached_greeting
 
         settings = await self.get_settings()
-        personality = self._orch._parse_identity_field("greeting") or ""
-        repo = self._orch._memory_repo
+        personality = self._registry.get("kernel")._parse_identity_field("greeting") or ""
+        repo = self._registry.get("memory_repo")
 
         # ── Wave 1: all independent DB fetches in parallel ─────────
         _consumer_ns = ("_profile", "_facts", "_project", "_conversation", "_emotions")
@@ -620,8 +613,8 @@ class ProactivityManager:
             repo.get("_profile", "user:name"),                          # 0: user name
             repo.list_keys("Reminders", prefix="reminder."),            # 1: reminder keys
             repo.get("_patterns", "suggestions"),                       # 2: suggestions
-            self._orch._session_repo.get_session_stats(),               # 3: session stats
-            self._orch._emotions.compute_relationship_score(),          # 4: relationship
+            self._registry.get("session_repo").get_session_stats(),               # 3: session stats
+            self._registry.get("emotions").compute_relationship_score(),          # 4: relationship
             *[repo.get_by_relevance(namespace=ns, limit=500, min_score=0.0)
               for ns in _consumer_ns],                                  # 5-9: memory counts
             return_exceptions=True,
@@ -709,7 +702,7 @@ class ProactivityManager:
         # ── Emotional context (depends on relationship level) ──────
         emotional_greeting_context = ""
         try:
-            emo_ctx = await self._orch._emotions.get_emotional_context(
+            emo_ctx = await self._registry.get("emotions").get_emotional_context(
                 stats["relationship_level"]
             )
             if emo_ctx:
@@ -732,14 +725,14 @@ class ProactivityManager:
 
         if not settings["llm_greeting"]:
             static = personality or f"Hello{(', ' + user_name) if user_name else ''}!"
-            briefing = await self._orch._build_briefing()
+            briefing = await self._registry.get("kernel")._build_briefing()
             if briefing:
                 return _make_result(f"{static}\n\n{briefing}")
             return _make_result(static)
 
         # ── Gather LLM context ──────────────────────────────────────
 
-        now = self._orch.user_now()
+        now = self._registry.get("kernel").user_now()
         hour = now.hour
 
         if hour < 5:
@@ -754,12 +747,12 @@ class ProactivityManager:
             time_of_day = "night"
 
         time_str = now.strftime("%I:%M %p on %A, %B %d")
-        agent_name = self._orch._parse_identity_field("name") or "MUSE"
+        agent_name = self._registry.get("kernel")._parse_identity_field("name") or "MUSE"
 
         # Scheduled task results
         briefing_parts = []
         try:
-            scheduled = await self._orch._scheduler.list_tasks()
+            scheduled = await self._registry.get("scheduler").list_tasks()
             for task in scheduled:
                 if not task.get("last_result_json") or task.get("last_status") != "completed":
                     continue
@@ -776,7 +769,7 @@ class ProactivityManager:
             logger.debug("Failed to fetch scheduled results for greeting: %s", e)
 
         # Pattern summary
-        pattern_summary = self._orch._patterns.summarize_recent()
+        pattern_summary = self._registry.get("patterns").summarize_recent()
 
         # Build prompt context
         reminder_parts = [f"Reminder: {r['what']} ({r['when']})" for r in reminders if r["what"]]
@@ -796,32 +789,27 @@ class ProactivityManager:
 
         context_block = "\n\n".join(context_parts) if context_parts else "No special context."
 
-        model = await self._orch._model_router.resolve_model()
+        model = await self._registry.get("model_router").resolve_model()
 
         try:
-            result = await self._orch._provider.complete(
+            result = await self._registry.get("provider").complete(
                 model=model,
                 messages=[
-                    {"role": "system", "content": (
-                        f"You are {agent_name}, a personal AI assistant. "
-                        f"Compose a brief, natural greeting for the user"
-                        f"{(' named ' + user_name) if user_name else ''}. "
-                        f"The user's local time is {time_str}. "
-                        f"Greet them as if it's {time_of_day}.\n\n"
-                        f"Your personality: {personality}\n\n"
-                        "Weave in any relevant context naturally — don't list "
-                        "items as bullet points, instead mention them conversationally. "
-                        "If there are background updates or reminders, mention them. "
-                        "If you have suggestions, offer ONE as a natural question.\n\n"
-                        "Keep it to 2-4 sentences. Be warm but concise. "
-                        "Use the user's local time as the only time reference — "
-                        "never mention other timezones or what time it is elsewhere."
-                        + (f"\n\nRespond in {self._orch._user_language}."
-                           if self._orch._user_language else "")
+                    {"role": "user", "content": (
+                        f"Write a greeting as {agent_name}"
+                        f"{(' for ' + user_name) if user_name else ''}.\n"
+                        f"Time: {time_str} ({time_of_day})\n\n"
+                        f"Context:\n{context_block}\n\n"
+                        "2-3 sentences. Mention any reminders or updates naturally."
                     )},
-                    {"role": "user", "content": context_block},
                 ],
-                max_tokens=200,
+                system=(
+                    f"You are {agent_name}. Write a short, warm greeting. "
+                    f"2-3 sentences max. No bullet points."
+                    + (f" Respond in {self._registry.get("session").user_language}."
+                       if self._registry.get("session").user_language else "")
+                ),
+                max_tokens=150,
             )
 
             greeting = result.text.strip()
@@ -833,7 +821,7 @@ class ProactivityManager:
 
         # Fallback to static greeting + briefing
         static = personality or f"Hello{(', ' + user_name) if user_name else ''}!"
-        briefing = await self._orch._build_briefing()
+        briefing = await self._registry.get("kernel")._build_briefing()
         if briefing:
             return _make_result(f"{static}\n\n{briefing}")
         return _make_result(static)

@@ -169,11 +169,17 @@ class CompactionManager:
 
     def __init__(
         self,
-        orchestrator,
+        orchestrator_or_registry,
         session_repo: SessionRepository,
         config: CompactionConfig,
     ):
-        self._orch = orchestrator
+        from muse.kernel.service_registry import ServiceRegistry
+        if isinstance(orchestrator_or_registry, ServiceRegistry):
+            self._orch = None
+            self._registry = orchestrator_or_registry
+        else:
+            self._orch = orchestrator_or_registry
+            self._registry = getattr(orchestrator_or_registry, '_registry', None)
         self._session_repo = session_repo
         self._cfg = config
 
@@ -284,8 +290,8 @@ class CompactionManager:
         )
 
         try:
-            model = await self._orch._model_router.resolve_model()
-            result = await self._orch._provider.complete(
+            model = await self._registry.get("model_router").resolve_model()
+            result = await self._registry.get("provider").complete(
                 model=model,
                 messages=[
                     {"role": "system", "content": (
@@ -301,7 +307,7 @@ class CompactionManager:
                 max_tokens=1200,
             )
             self._running_summary = result.text.strip()
-            self._orch.track_llm_usage(result.tokens_in, result.tokens_out)
+            self._registry.get("session").track_llm_usage(result.tokens_in, result.tokens_out)
             logger.debug(
                 "Compaction fold: %d turns merged, summary now %d chars",
                 len(batch), len(self._running_summary),
@@ -365,8 +371,8 @@ class CompactionManager:
         )
 
         try:
-            model = await self._orch._model_router.resolve_model()
-            result = await self._orch._provider.complete(
+            model = await self._registry.get("model_router").resolve_model()
+            result = await self._registry.get("provider").complete(
                 model=model,
                 messages=[
                     {"role": "system", "content": (
@@ -379,7 +385,7 @@ class CompactionManager:
                 max_tokens=1200,
             )
             self._running_summary = result.text.strip()
-            self._orch.track_llm_usage(result.tokens_in, result.tokens_out)
+            self._registry.get("session").track_llm_usage(result.tokens_in, result.tokens_out)
             await self._save_checkpoint_async()
             logger.info(
                 "Compaction rebuild complete for session %s", session_id,
