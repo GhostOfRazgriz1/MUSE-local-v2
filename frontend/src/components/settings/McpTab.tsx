@@ -31,7 +31,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 function MCPAddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () => void }) {
   const [name, setName] = useState("");
-  const [transport, setTransport] = useState<"stdio" | "sse">("stdio");
+  const [transport, setTransport] = useState<"stdio" | "sse" | "streamable-http">("stdio");
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
   const [url, setUrl] = useState("");
@@ -44,7 +44,7 @@ function MCPAddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () =
   const handleSubmit = async () => {
     if (!name.trim()) { setError("Name is required."); return; }
     if (transport === "stdio" && !command.trim()) { setError("Command is required."); return; }
-    if (transport === "sse" && !url.trim()) { setError("URL is required."); return; }
+    if ((transport === "sse" || transport === "streamable-http") && !url.trim()) { setError("URL is required."); return; }
 
     setSaving(true);
     setError("");
@@ -92,7 +92,7 @@ function MCPAddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () =
       <div className="mcp-add-header">
         <div className="mcp-add-title">Add MCP Server</div>
         <div className="mcp-add-subtitle">
-          {transport === "stdio" ? "Runs as a local subprocess" : "Connects to a remote HTTP endpoint"}
+          {transport === "stdio" ? "Runs as a local subprocess" : "Connects to a remote HTTP endpoint"}{transport === "streamable-http" ? " (streamable)" : ""}
         </div>
       </div>
 
@@ -119,6 +119,13 @@ function MCPAddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () =
             >
               HTTP (SSE)
             </button>
+            <button
+              className={`mcp-transport-btn ${transport === "streamable-http" ? "active" : ""}`}
+              onClick={() => setTransport("streamable-http")}
+              type="button"
+            >
+              Streamable HTTP
+            </button>
           </div>
         </label>
 
@@ -140,7 +147,7 @@ function MCPAddForm({ onAdded, onCancel }: { onAdded: () => void; onCancel: () =
         ) : (
           <label className="mcp-field-group">
             <span className="mcp-field-label">Server URL</span>
-            <input className="settings-input" placeholder="http://localhost:3001/sse" value={url} onChange={(e) => setUrl(e.target.value)} />
+            <input className="settings-input" placeholder={transport === "streamable-http" ? "http://localhost:3001/mcp" : "http://localhost:3001/sse"} value={url} onChange={(e) => setUrl(e.target.value)} />
           </label>
         )}
       </div>

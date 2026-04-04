@@ -93,6 +93,8 @@ class MCPConnectionManager:
                 session = await self._connect_stdio(stack, config)
             elif config.transport == "sse":
                 session = await self._connect_sse(stack, config)
+            elif config.transport == "streamable-http":
+                session = await self._connect_streamable_http(stack, config)
             else:
                 raise ValueError(f"Unknown transport: {config.transport}")
 
@@ -223,6 +225,15 @@ class MCPConnectionManager:
         from mcp.client.sse import sse_client
 
         reader, writer = await stack.enter_async_context(sse_client(config.url))
+        session = await stack.enter_async_context(ClientSession(reader, writer))
+        await session.initialize()
+        return session
+
+    async def _connect_streamable_http(self, stack: AsyncExitStack, config: MCPServerConfig):
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        reader, writer = await stack.enter_async_context(streamablehttp_client(config.url))
         session = await stack.enter_async_context(ClientSession(reader, writer))
         await session.initialize()
         return session

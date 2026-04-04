@@ -1485,27 +1485,29 @@ class Orchestrator:
             yield {"type": "error", "content": f"MCP server '{server_id}' is not connected."}
             return
 
-        # Permission check
-        perm = "mcp:execute"
-        check = await self._permissions.check_permission(intent.skill_id, perm)
-        if not check.allowed and check.requires_user_approval:
-            request_id = f"mcp-perm-{server_id}-{id(intent)}"
-            self._pending_permission_tasks[request_id] = {
-                "message": user_message,
-                "skill_id": intent.skill_id,
-                "perms_needed": [perm],
-            }
-            yield {
-                "type": "permission_request",
-                "request_id": request_id,
-                "skill_id": intent.skill_id,
-                "skill_name": conn.config.name,
-                "permissions": [perm],
-                "is_first_party": False,
-            }
-            return
+        # Permission check — skip if tool is in auto_approve_tools list
+        auto_approved = set(conn.config.auto_approve_tools)
+        perm = f"mcp:{server_id}:execute"
+        if tool_name not in auto_approved:
+            check = await self._permissions.check_permission(intent.skill_id, perm)
+            if not check.allowed and check.requires_user_approval:
+                request_id = f"mcp-perm-{server_id}-{id(intent)}"
+                self._pending_permission_tasks[request_id] = {
+                    "message": user_message,
+                    "skill_id": intent.skill_id,
+                    "perms_needed": [perm],
+                }
+                yield {
+                    "type": "permission_request",
+                    "request_id": request_id,
+                    "skill_id": intent.skill_id,
+                    "skill_name": f"{conn.config.name}: {tool_name}",
+                    "permissions": [perm],
+                    "is_first_party": False,
+                }
+                return
 
-        # Find the tool schema
+        # Find the tool schema — strict match, no silent fallback
         tool_schema = None
         for tool in conn.tools:
             if tool["name"] == tool_name:
@@ -1513,13 +1515,15 @@ class Orchestrator:
                 break
 
         if tool_schema is None:
-            # If no specific tool was resolved, try to match from the instruction
-            if len(conn.tools) == 1:
-                tool_schema = conn.tools[0]
-                tool_name = tool_schema["name"]
-            else:
-                yield {"type": "error", "content": f"Tool '{tool_name}' not found on MCP server '{server_id}'."}
-                return
+            available = [t["name"] for t in conn.tools]
+            yield {
+                "type": "error",
+                "content": (
+                    f"Tool '{tool_name}' not found on MCP server '{server_id}'. "
+                    f"Available tools: {', '.join(available)}"
+                ),
+            }
+            return
 
         yield {
             "type": "task_started",
@@ -1532,32 +1536,49 @@ class Orchestrator:
         try:
             # Use LLM to extract structured arguments from natural language
             input_schema = tool_schema.get("inputSchema", {})
+            required_fields = input_schema.get("required", [])
             model = await self._model_router.resolve_model()
 
             arg_prompt = (
-                f'User request: "{user_message}"\n\n'
+                f'User: "{user_message}"\n'
                 f"Tool: {tool_name}\n"
-                f"Description: {tool_schema.get('description', '')}\n"
-                f"Input schema: {json.dumps(input_schema)}\n\n"
-                f"Extract the arguments for this tool call. "
-                f"Reply with ONLY valid JSON matching the schema."
+                f"Schema: {json.dumps(input_schema)}\n\n"
+                f"Extract arguments as JSON. Reply with ONLY valid JSON."
             )
 
             arg_result = await self._provider.complete(
                 model=model,
                 messages=[{"role": "user", "content": arg_prompt}],
+                system="Extract tool arguments from the user's request. Reply with ONLY valid JSON matching the schema.",
                 max_tokens=500,
             )
             self.track_llm_usage(arg_result.tokens_in, arg_result.tokens_out)
 
             raw_args = arg_result.text.strip()
-            # Strip markdown fences if present
             if raw_args.startswith("```"):
                 import re as _re
                 raw_args = _re.sub(r"^```\w*\n?", "", raw_args)
                 raw_args = _re.sub(r"\n?```$", "", raw_args).strip()
 
             arguments = json.loads(raw_args)
+
+            # Validate required fields are present
+            if required_fields:
+                missing = [f for f in required_fields if f not in arguments]
+                if missing:
+                    yield {
+                        "type": "error",
+                        "content": f"Missing required arguments for {tool_name}: {', '.join(missing)}",
+                    }
+                    return
+
+            # Validate argument types against schema properties
+            schema_props = input_schema.get("properties", {})
+            for key, value in list(arguments.items()):
+                if key not in schema_props:
+                    # Remove unknown fields rather than sending them
+                    del arguments[key]
+                    logger.debug("Stripped unknown arg '%s' from MCP tool call %s", key, tool_name)
 
             # Call the MCP tool
             result = await self._mcp_manager.call_tool(server_id, tool_name, arguments)

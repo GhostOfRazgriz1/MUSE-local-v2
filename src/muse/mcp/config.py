@@ -12,7 +12,7 @@ class MCPServerConfig:
 
     server_id: str
     name: str
-    transport: str  # "stdio" | "sse"
+    transport: str  # "stdio" | "sse" | "streamable-http"
 
     # Stdio transport fields
     command: str = ""
