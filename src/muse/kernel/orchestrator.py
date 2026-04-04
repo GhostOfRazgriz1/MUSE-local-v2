@@ -188,48 +188,55 @@ class Orchestrator:
             promotion_manager, config.registers, identity=self._identity
         )
 
-        # Session state
-        self._session_id: str | None = None
-        self._session_start = datetime.now(timezone.utc).isoformat()
-        self._conversation_history: list[dict] = []
-        self._branch_head_id: int | None = None
-        self._user_tz: str = "UTC"
+        # ── Session state (managed by SessionStore) ──────────────
+        from muse.kernel.session_store import SessionStore
+        self._session = SessionStore()
         self._running = False
 
-        # Event subscribers (for WebSocket push)
-        self._event_listeners: list[asyncio.Queue] = []
+        # ── Event bus (replaces _event_listeners) ────────────────
+        from muse.kernel.message_bus import MessageBus
+        self._event_bus = MessageBus()
 
-        # Pending permission requests: request_id -> {message, skill_id, perms_needed}
-        self._pending_permission_tasks: dict[str, dict] = {}
+        # ── Service registry ─────────────────────────────────────
+        from muse.kernel.service_registry import ServiceRegistry
+        self._registry = ServiceRegistry()
 
-        # Active LocalBridge instances: task_id -> LocalBridge
-        self._active_bridges: dict[str, Any] = {}
-
-        # Steering: redirect in-flight plans/multi-tasks
-        self._steering_queue: asyncio.Queue[str] = asyncio.Queue()
-        self._executing_plan: bool = False
-
-        # Last delegated intent — for "try again" / "do it again"
-        self._last_delegated_message: str | None = None
-
-        # Per-session LLM usage tracking
-        self._llm_calls_count: int = 0
-        self._llm_tokens_in: int = 0
-        self._llm_tokens_out: int = 0
+        # Register all services for modules to access via registry
+        self._registry.register("kernel", self)
+        self._registry.register("config", config)
+        self._registry.register("db", db)
+        self._registry.register("memory_repo", memory_repo)
+        self._registry.register("cache", memory_cache)
+        self._registry.register("embeddings", embedding_service)
+        self._registry.register("promotion", promotion_manager)
+        self._registry.register("demotion", demotion_manager)
+        self._registry.register("permissions", permission_manager)
+        self._registry.register("trust_budget", trust_budget)
+        self._registry.register("provider", provider)
+        self._registry.register("model_router", model_router)
+        self._registry.register("vault", credential_vault)
+        self._registry.register("audit", audit_repo)
+        self._registry.register("wal", wal)
+        self._registry.register("skill_loader", skill_loader)
+        self._registry.register("sandbox", skill_sandbox)
+        self._registry.register("gateway", gateway)
+        self._registry.register("task_manager", self._task_manager)
+        self._registry.register("session_repo", self._session_repo)
+        self._registry.register("event_bus", self._event_bus)
+        self._registry.register("session", self._session)
+        if mcp_manager:
+            self._registry.register("mcp_manager", mcp_manager)
 
         # Usage pattern tracking
         self._patterns = PatternTracker(memory_repo)
+        self._registry.register("patterns", self._patterns)
 
         # Emotion tracking and relationship progression
         from muse.kernel.emotions import EmotionTracker
         self._emotions = EmotionTracker(memory_repo, self._session_repo)
+        self._registry.register("emotions", self._emotions)
 
-        # User language preference (cached from user_settings)
-        self._user_language: str = ""
-
-        # Agent mood — visible state surfaced in the UI.
-        # Hierarchy: working > dreaming > LLM-picked/emotion > thinking > neutral > resting
-        self._mood: str = "resting"
+        # Agent mood priority map
         self._mood_priority: dict[str, int] = {
             "resting": 0, "neutral": 1, "thinking": 2,
             "curious": 3, "amused": 3, "excited": 3, "concerned": 3,
@@ -246,19 +253,151 @@ class Orchestrator:
 
         # Memory consolidation ("dreaming")
         self._dreaming = DreamingManager(self)
+        self._registry.register("dreaming", self._dreaming)
 
         # Conversation compaction (sliding-window summary)
         from muse.kernel.compaction import CompactionManager
         self._compaction = CompactionManager(self, self._session_repo, config.compaction)
+        self._registry.register("compaction", self._compaction)
 
         # Background task scheduler
         self._scheduler = Scheduler(db, self)
+        self._registry.register("scheduler", self._scheduler)
+
+        # Classifier will be registered after startup (needs skill catalog)
+        # self._registry.register("classifier", self._classifier) — done in start()
 
         # Desktop vision (screen streaming with local Gemma 4)
         from muse.screen.manager import ScreenManager
         self.screen_manager = ScreenManager(
             model_router=model_router,
         )
+
+    # ── Backward-compat property shims for session state ─────────
+    # These delegate to self._session so external code that accesses
+    # self._session_id, self._conversation_history, etc. keeps working.
+
+    @property
+    def _session_id(self):
+        return self._session.session_id
+
+    @_session_id.setter
+    def _session_id(self, val):
+        self._session.session_id = val
+
+    @property
+    def _conversation_history(self):
+        return self._session.conversation_history
+
+    @_conversation_history.setter
+    def _conversation_history(self, val):
+        self._session.conversation_history = val
+
+    @property
+    def _branch_head_id(self):
+        return self._session.branch_head_id
+
+    @_branch_head_id.setter
+    def _branch_head_id(self, val):
+        self._session.branch_head_id = val
+
+    @property
+    def _user_tz(self):
+        return self._session.user_tz
+
+    @_user_tz.setter
+    def _user_tz(self, val):
+        self._session.user_tz = val
+
+    @property
+    def _user_language(self):
+        return self._session.user_language
+
+    @_user_language.setter
+    def _user_language(self, val):
+        self._session.user_language = val
+
+    @property
+    def _mood(self):
+        return self._session.mood
+
+    @_mood.setter
+    def _mood(self, val):
+        self._session.mood = val
+
+    @property
+    def _executing_plan(self):
+        return self._session.executing_plan
+
+    @_executing_plan.setter
+    def _executing_plan(self, val):
+        self._session.executing_plan = val
+
+    @property
+    def _steering_queue(self):
+        return self._session.steering_queue
+
+    @_steering_queue.setter
+    def _steering_queue(self, val):
+        self._session.steering_queue = val
+
+    @property
+    def _pending_permission_tasks(self):
+        return self._session.pending_permission_tasks
+
+    @_pending_permission_tasks.setter
+    def _pending_permission_tasks(self, val):
+        self._session.pending_permission_tasks = val
+
+    @property
+    def _active_bridges(self):
+        return self._session.active_bridges
+
+    @_active_bridges.setter
+    def _active_bridges(self, val):
+        self._session.active_bridges = val
+
+    @property
+    def _last_delegated_message(self):
+        return self._session.last_delegated_message
+
+    @_last_delegated_message.setter
+    def _last_delegated_message(self, val):
+        self._session.last_delegated_message = val
+
+    @property
+    def _llm_calls_count(self):
+        return self._session.llm_calls_count
+
+    @_llm_calls_count.setter
+    def _llm_calls_count(self, val):
+        self._session.llm_calls_count = val
+
+    @property
+    def _llm_tokens_in(self):
+        return self._session.llm_tokens_in
+
+    @_llm_tokens_in.setter
+    def _llm_tokens_in(self, val):
+        self._session.llm_tokens_in = val
+
+    @property
+    def _llm_tokens_out(self):
+        return self._session.llm_tokens_out
+
+    @_llm_tokens_out.setter
+    def _llm_tokens_out(self, val):
+        self._session.llm_tokens_out = val
+
+    @property
+    def _event_listeners(self):
+        """Backward compat — returns the list of subscriber queues."""
+        return self._event_bus.subscribers
+
+    @property
+    def registry(self) -> "ServiceRegistry":
+        """Public access to the service registry."""
+        return self._registry
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -320,6 +459,7 @@ class Orchestrator:
         # Skill Author is now a first-party skill (skills/skill_author/)
         # — no virtual registration needed
 
+        self._registry.register("classifier", self._classifier)
         logger.info(
             "Intent classifier loaded with %d skills", len(self._classifier._skills)
         )
@@ -582,9 +722,7 @@ class Orchestrator:
 
     def track_llm_usage(self, tokens_in: int, tokens_out: int) -> None:
         """Record an LLM call for rate tracking."""
-        self._llm_calls_count += 1
-        self._llm_tokens_in += tokens_in
-        self._llm_tokens_out += tokens_out
+        self._session.track_llm_usage(tokens_in, tokens_out)
 
     def user_now(self) -> datetime:
         """Return the current time in the user's timezone."""
@@ -2916,12 +3054,10 @@ class Orchestrator:
 
     def subscribe(self) -> asyncio.Queue:
         """Subscribe to orchestrator events (for WebSocket push)."""
-        queue: asyncio.Queue = asyncio.Queue(maxsize=256)
-        self._event_listeners.append(queue)
-        return queue
+        return self._event_bus.subscribe()
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
-        self._event_listeners.remove(queue)
+        self._event_bus.unsubscribe(queue)
 
     def run_in_background(self, gen, session_id: str | None = None) -> asyncio.Task:
         """Run an async generator as a background task on the orchestrator.
@@ -2979,11 +3115,7 @@ class Orchestrator:
         return task
 
     async def _emit_event(self, event: dict) -> None:
-        for queue in self._event_listeners:
-            try:
-                queue.put_nowait(event)
-            except asyncio.QueueFull:
-                pass  # Drop event rather than block other subscribers
+        await self._event_bus.emit(event)
 
     async def set_mood(self, mood: str, force: bool = False) -> None:
         """Set the agent's visible mood and broadcast to connected clients.
