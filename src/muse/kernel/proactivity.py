@@ -141,9 +141,34 @@ class ProactivityManager:
             "level3_skills": json.loads(settings["level3_skills"]),
         }
 
+    async def _get_relationship_level(self) -> int:
+        """Get the current relationship level (1-4)."""
+        try:
+            rel = await self._orch._emotions.compute_relationship_score()
+            return rel.get("level", 1)
+        except Exception:
+            return 1
+
+    # Relationship level required for each proactivity level:
+    #   Proactivity 1 (post-task suggestions) → relationship level 2+
+    #   Proactivity 2 (idle nudges)           → relationship level 3+
+    #   Proactivity 3 (autonomous actions)    → relationship level 4
+    _REQUIRED_RELATIONSHIP = {1: 2, 2: 3, 3: 4}
+
     async def is_allowed(self, level: int) -> bool:
-        """Check if a proactivity level is enabled and budget remains."""
+        """Check if a proactivity level is enabled, budget remains,
+        and the relationship is strong enough."""
         if self._silenced:
+            return False
+
+        # Suppress during onboarding
+        if self._orch._onboarding and self._orch._onboarding.is_active:
+            return False
+
+        # Gate on relationship level
+        required_rel = self._REQUIRED_RELATIONSHIP.get(level, 4)
+        rel_level = await self._get_relationship_level()
+        if rel_level < required_rel:
             return False
 
         self._maybe_reset_daily()
