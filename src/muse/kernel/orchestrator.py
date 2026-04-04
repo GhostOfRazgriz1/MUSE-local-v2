@@ -106,11 +106,14 @@ def extract_mood_tag(text: str) -> tuple[str, str | None]:
     return text, None
 
 
-class Orchestrator:
-    """The persistent agent loop — heart of MUSE.
+class Kernel:
+    """The MUSE kernel — thin dispatch layer.
 
-    Receives input, classifies intent, assembles context,
-    dispatches tasks, and manages memory.
+    Receives input, classifies intent, dispatches to handlers
+    (InlineHandler, SkillExecutor, PlanExecutor, etc.), and manages
+    session lifecycle. Services are accessed via the ServiceRegistry.
+
+    Previously known as ``Orchestrator`` (alias preserved for compat).
     """
 
     def __init__(
@@ -3017,3 +3020,7 @@ class Orchestrator:
                 await self._demotion.flush_cache_to_disk()
             except Exception as e:
                 logger.error(f"Cache flush error: {e}")
+
+
+# Backward compatibility — external code imports Orchestrator
+Orchestrator = Kernel
