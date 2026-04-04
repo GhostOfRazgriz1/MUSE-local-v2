@@ -236,7 +236,12 @@ class Orchestrator:
         self._emotions = EmotionTracker(memory_repo, self._session_repo)
         self._registry.register("emotions", self._emotions)
 
-        # Agent mood priority map
+        # Mood service
+        from muse.kernel.mood import MoodService
+        self._mood_service = MoodService(self._session, self._event_bus)
+        self._registry.register("mood", self._mood_service)
+
+        # Keep priority map for backward compat
         self._mood_priority: dict[str, int] = {
             "resting": 0, "neutral": 1, "thinking": 2,
             "curious": 3, "amused": 3, "excited": 3, "concerned": 3,
@@ -3118,21 +3123,8 @@ class Orchestrator:
         await self._event_bus.emit(event)
 
     async def set_mood(self, mood: str, force: bool = False) -> None:
-        """Set the agent's visible mood and broadcast to connected clients.
-
-        Deduplicates: no event is emitted if the mood hasn't changed.
-        If *force* is False, a lower-priority mood won't override a
-        higher-priority one (e.g. 'neutral' won't replace 'working').
-        """
-        if mood == self._mood:
-            return
-        if not force:
-            current_pri = self._mood_priority.get(self._mood, 1)
-            new_pri = self._mood_priority.get(mood, 1)
-            if new_pri < current_pri and self._mood in ("working", "dreaming"):
-                return  # Don't downgrade from working/dreaming unless forced
-        self._mood = mood
-        await self._emit_event({"type": "mood_changed", "mood": mood})
+        """Delegate to MoodService."""
+        await self._mood_service.set(mood, force=force)
 
     # ------------------------------------------------------------------
     # Conversation context for skills
