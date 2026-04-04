@@ -1,7 +1,7 @@
 """Documents skill — read, search, and answer questions about local files.
 
-Supports: .txt, .md, .py, .js, .ts, .json, .csv, .html, .xml, .yaml, .yml,
-.toml, .cfg, .ini, .log, .sh, .bat, .sql, .java, .c, .cpp, .h, .go, .rs, .rb
+Uses direct filesystem access (first-party, lightweight isolation).
+Resolves paths relative to the user's MUSE workspace (~/Documents/MUSE).
 """
 
 from __future__ import annotations
@@ -16,39 +16,130 @@ _TEXT_EXTENSIONS = {
     ".html", ".xml", ".yaml", ".yml", ".toml", ".cfg", ".ini", ".log",
     ".sh", ".bat", ".cmd", ".sql", ".java", ".c", ".cpp", ".h", ".hpp",
     ".go", ".rs", ".rb", ".php", ".r", ".swift", ".kt", ".cs", ".css",
-    ".scss", ".less", ".vue", ".svelte", ".env", ".gitignore", ".dockerfile",
+    ".scss", ".less", ".vue", ".svelte", ".env", ".gitignore",
 }
 
-# Max file size to read (1 MB)
-_MAX_FILE_SIZE = 1_048_576
-# Max total chars to feed into LLM context
-_MAX_CONTEXT_CHARS = 12_000
+_SKIP_DIRS = frozenset({
+    ".git", ".svn", "node_modules", "__pycache__",
+    ".venv", "venv", ".tox", ".mypy_cache", "dist", "build",
+})
+
+_MAX_FILE_SIZE = 1_048_576     # 1 MB per file
+_MAX_CONTEXT_CHARS = 12_000    # total chars fed to LLM
+_MAX_FILES = 30                # max files to process
+_MAX_SEARCH_MATCHES = 20
 
 
-# ── Entry point ──────────────────────────────────────────────────────
+def _default_workspace() -> str:
+    if os.name == "nt":
+        return str(Path.home() / "Documents" / "MUSE")
+    elif os.name == "posix" and hasattr(os, "uname") and os.uname().sysname == "Darwin":
+        return str(Path.home() / "Documents" / "MUSE")
+    else:
+        docs = os.environ.get("XDG_DOCUMENTS_DIR", "")
+        if docs and Path(docs).is_dir():
+            return str(Path(docs) / "MUSE")
+        home_docs = Path.home() / "Documents"
+        if home_docs.is_dir():
+            return str(home_docs / "MUSE")
+        return str(Path.home() / "MUSE")
+
+
+DEFAULT_WORKSPACE = _default_workspace()
+
+
+def _resolve_path(target: str) -> Path:
+    """Resolve a path, treating relative paths as relative to workspace."""
+    p = Path(target)
+    if not p.is_absolute():
+        p = Path(DEFAULT_WORKSPACE) / p
+    return p.resolve()
+
+
+def _list_text_files(directory: Path, recursive: bool = True) -> list[Path]:
+    """List readable text files in a directory."""
+    files = []
+    if not directory.is_dir():
+        return files
+    if recursive:
+        for root, dirs, filenames in os.walk(directory):
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+            for name in filenames:
+                fpath = Path(root) / name
+                if fpath.suffix.lower() in _TEXT_EXTENSIONS and fpath.stat().st_size < _MAX_FILE_SIZE:
+                    files.append(fpath)
+                    if len(files) >= _MAX_FILES:
+                        return files
+    else:
+        for entry in sorted(directory.iterdir()):
+            if entry.is_file() and entry.suffix.lower() in _TEXT_EXTENSIONS:
+                files.append(entry)
+                if len(files) >= _MAX_FILES:
+                    break
+    return files
+
+
+def _read_file_safe(path: Path) -> str | None:
+    """Read a text file, returning None on failure."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def _read_target(target: Path) -> tuple[str, list[str]]:
+    """Read a file or folder. Returns (combined_text, file_list)."""
+    if target.is_file():
+        content = _read_file_safe(target)
+        if content:
+            return f"=== {target.name} ===\n{content}\n", [str(target)]
+        return "", []
+
+    if not target.is_dir():
+        return "", []
+
+    files = _list_text_files(target)
+    parts = []
+    read_files = []
+    total = 0
+
+    for fpath in files:
+        content = _read_file_safe(fpath)
+        if content is None:
+            continue
+        rel = str(fpath.relative_to(target)) if fpath.is_relative_to(target) else fpath.name
+        if total + len(content) > _MAX_CONTEXT_CHARS:
+            remaining = _MAX_CONTEXT_CHARS - total
+            if remaining > 200:
+                parts.append(f"=== {rel} ===\n{content[:remaining]}\n... [truncated]")
+                read_files.append(rel)
+            break
+        parts.append(f"=== {rel} ===\n{content}")
+        read_files.append(rel)
+        total += len(content)
+
+    return "\n\n".join(parts), read_files
+
+
+# ── Entry points ─────────────────────────────────────────────────────
 
 async def ask(ctx) -> dict:
-    """Answer a question about file contents."""
     return await _qa(ctx)
 
 
 async def search(ctx) -> dict:
-    """Search for content across files."""
     return await _search_files(ctx)
 
 
 async def summarize(ctx) -> dict:
-    """Summarize a document or folder."""
     return await _summarize(ctx)
 
 
 async def index(ctx) -> dict:
-    """Index a folder for faster future lookups."""
     return await _index_folder(ctx)
 
 
 async def run(ctx) -> dict:
-    """Default entry — detect intent and route."""
     instruction = ctx.brief.get("instruction", "").lower()
     if any(kw in instruction for kw in ["summarize", "summary", "summarise"]):
         return await _summarize(ctx)
@@ -62,28 +153,24 @@ async def run(ctx) -> dict:
 # ── Q&A ──────────────────────────────────────────────────────────────
 
 async def _qa(ctx) -> dict:
-    """Read files and answer a question about their contents."""
     instruction = ctx.brief.get("instruction", "")
+    target_str = await _extract_path(ctx, instruction)
+    if not target_str:
+        return _err("Please specify a file or folder. E.g., 'What does config.py do?'")
 
-    # Extract file/folder path from instruction
-    target = await _extract_path(ctx, instruction)
-    if not target:
-        return _err("Please specify a file or folder to read. E.g., 'What does main.py do?'")
-
-    contents, file_list = await _read_target(ctx, target)
+    target = _resolve_path(target_str)
+    contents, file_list = _read_target(target)
     if not contents:
-        return _err(f"Could not read any text files from: {target}")
+        return _err(f"Could not read any text files from: {target_str}\n(Resolved to: {target})")
 
-    # Ask LLM with the file contents as context
     answer = await ctx.llm.complete(
         prompt=(
             f"Question: {instruction}\n\n"
             f"File contents:\n{contents[:_MAX_CONTEXT_CHARS]}"
         ),
         system=(
-            "Answer the question based on the file contents provided. "
-            "Be specific and reference relevant parts of the files. "
-            "If the answer isn't in the files, say so."
+            "Answer the question based on the file contents. "
+            "Be specific. If the answer isn't in the files, say so."
         ),
     )
 
@@ -97,42 +184,37 @@ async def _qa(ctx) -> dict:
 # ── Search ───────────────────────────────────────────────────────────
 
 async def _search_files(ctx) -> dict:
-    """Search for content across files in a directory."""
     instruction = ctx.brief.get("instruction", "")
+    target_str, query = await _extract_path_and_query(ctx, instruction)
 
-    target = await _extract_path(ctx, instruction)
-    query = await _extract_query(ctx, instruction)
     if not query:
         return _err("What should I search for?")
 
-    target = target or "."
+    target = _resolve_path(target_str or ".")
+    if not target.is_dir():
+        return _err(f"Directory not found: {target}")
+
+    files = _list_text_files(target)
     matches = []
     files_checked = 0
 
-    try:
-        file_list = await _list_text_files(ctx, target, recursive=True)
-    except Exception as e:
-        return _err(f"Could not access: {target} — {e}")
-
-    for fpath in file_list[:50]:  # cap at 50 files
-        try:
-            content = await ctx.files.read(fpath)
-            files_checked += 1
-        except Exception:
+    for fpath in files:
+        content = _read_file_safe(fpath)
+        if content is None:
             continue
+        files_checked += 1
+        rel = str(fpath.relative_to(target)) if fpath.is_relative_to(target) else fpath.name
 
-        # Simple case-insensitive search
-        lines = content.split("\n")
-        for i, line in enumerate(lines, 1):
+        for i, line in enumerate(content.split("\n"), 1):
             if query.lower() in line.lower():
                 matches.append({
-                    "file": fpath,
+                    "file": rel,
                     "line": i,
                     "content": line.strip()[:200],
                 })
-                if len(matches) >= 20:
+                if len(matches) >= _MAX_SEARCH_MATCHES:
                     break
-        if len(matches) >= 20:
+        if len(matches) >= _MAX_SEARCH_MATCHES:
             break
 
     if not matches:
@@ -143,7 +225,7 @@ async def _search_files(ctx) -> dict:
         }
 
     results_text = "\n".join(
-        f"  {m['file']}:{m['line']} — {m['content']}" for m in matches[:10]
+        f"  {m['file']}:{m['line']} — {m['content']}" for m in matches
     )
 
     return {
@@ -156,26 +238,21 @@ async def _search_files(ctx) -> dict:
 # ── Summarize ────────────────────────────────────────────────────────
 
 async def _summarize(ctx) -> dict:
-    """Summarize a file or folder."""
     instruction = ctx.brief.get("instruction", "")
-
-    target = await _extract_path(ctx, instruction)
-    if not target:
+    target_str = await _extract_path(ctx, instruction)
+    if not target_str:
         return _err("Please specify a file or folder to summarize.")
 
-    contents, file_list = await _read_target(ctx, target)
+    target = _resolve_path(target_str)
+    contents, file_list = _read_target(target)
     if not contents:
-        return _err(f"Could not read any text files from: {target}")
+        return _err(f"Could not read any text files from: {target_str}")
 
     summary = await ctx.llm.complete(
-        prompt=(
-            f"Summarize the following files:\n\n"
-            f"{contents[:_MAX_CONTEXT_CHARS]}"
-        ),
+        prompt=f"Summarize:\n\n{contents[:_MAX_CONTEXT_CHARS]}",
         system=(
-            "Write a clear, structured summary of the file contents. "
-            "Include key points, purpose, and notable details. "
-            "If multiple files, summarize each briefly then give an overall summary."
+            "Write a clear summary of the file contents. "
+            "Include key points and purpose. Be concise."
         ),
     )
 
@@ -189,40 +266,33 @@ async def _summarize(ctx) -> dict:
 # ── Index ────────────────────────────────────────────────────────────
 
 async def _index_folder(ctx) -> dict:
-    """Index a folder by storing file summaries in memory."""
     instruction = ctx.brief.get("instruction", "")
-
-    target = await _extract_path(ctx, instruction)
-    if not target:
+    target_str = await _extract_path(ctx, instruction)
+    if not target_str:
         return _err("Please specify a folder to index.")
 
-    try:
-        file_list = await _list_text_files(ctx, target, recursive=True)
-    except Exception as e:
-        return _err(f"Could not access: {target} — {e}")
+    target = _resolve_path(target_str)
+    if not target.is_dir():
+        return _err(f"Not a directory: {target_str}")
 
-    if not file_list:
-        return _err(f"No readable text files found in: {target}")
+    files = _list_text_files(target)
+    if not files:
+        return _err(f"No readable text files in: {target_str}")
 
     indexed = 0
-    for fpath in file_list[:30]:  # cap at 30 files
-        try:
-            content = await ctx.files.read(fpath)
-        except Exception:
+    for fpath in files:
+        content = _read_file_safe(fpath)
+        if content is None:
             continue
-
-        # Store a brief summary of each file in memory
+        rel = str(fpath.relative_to(target)) if fpath.is_relative_to(target) else fpath.name
+        key = f"file.{_slugify(rel)}"
         brief = content[:500]
-        ext = os.path.splitext(fpath)[1]
-        key = f"file.{_slugify(fpath)}"
-        value = f"[{ext}] {fpath}\n{brief}"
-
-        await ctx.memory.write(key, value)
+        await ctx.memory.write(key, f"[{fpath.suffix}] {rel}\n{brief}")
         indexed += 1
 
     return {
-        "payload": {"folder": target, "files_indexed": indexed},
-        "summary": f"Indexed {indexed} files from {target}. I can now answer questions about them faster.",
+        "payload": {"folder": target_str, "files_indexed": indexed},
+        "summary": f"Indexed {indexed} files from {target_str}. I can now answer questions about them faster.",
         "success": True,
     }
 
@@ -230,108 +300,57 @@ async def _index_folder(ctx) -> dict:
 # ── Helpers ──────────────────────────────────────────────────────────
 
 async def _extract_path(ctx, instruction: str) -> str | None:
-    """Extract a file or folder path from the instruction using LLM."""
     result = await ctx.llm.complete(
         prompt=(
             f'Instruction: "{instruction}"\n'
-            "What file or folder path is mentioned? "
-            "Reply with ONLY the path. If none, reply: NONE"
+            "What file or folder path is mentioned? Reply with ONLY the path or NONE."
         ),
-        system="Extract the file or folder path. Reply with ONLY the path or NONE.",
+        system="Extract the file/folder path. ONLY the path. No explanation.",
         max_tokens=50,
     )
     path = result.strip().strip('"\'`')
-    if path.upper() == "NONE" or not path:
+    if not path or path.upper() == "NONE":
         return None
     return path
 
 
-async def _extract_query(ctx, instruction: str) -> str | None:
-    """Extract the search query from the instruction."""
+async def _extract_path_and_query(ctx, instruction: str) -> tuple[str | None, str | None]:
+    # Try regex first for common patterns
+    # "find X in Y", "search for X in Y", "look for X in Y"
+    m = re.search(
+        r"(?:find|search\s+for|look\s+for|grep)\s+(.+?)\s+in\s+(?:the\s+)?(.+?)(?:\s+folder|\s+directory)?$",
+        instruction, re.IGNORECASE,
+    )
+    if m:
+        return m.group(2).strip(), m.group(1).strip()
+
+    # "search Y for X"
+    m = re.search(
+        r"(?:search|grep)\s+(.+?)\s+for\s+(.+)",
+        instruction, re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    # Fallback to LLM
     result = await ctx.llm.complete(
         prompt=(
             f'Instruction: "{instruction}"\n'
-            "What text should be searched for? "
-            "Reply with ONLY the search term."
+            "What folder and what text to search for?\n"
+            "Reply as: FOLDER|SEARCHTERM\n"
+            "Example: test_docs|rate limit"
         ),
-        system="Extract the search term. Reply with ONLY the search term.",
+        system="Extract folder and search term. Reply as FOLDER|SEARCHTERM only.",
         max_tokens=50,
     )
-    query = result.strip().strip('"\'`')
-    return query if query else None
 
+    parts = result.strip().strip('"\'`').split("|")
+    if len(parts) == 2:
+        folder = parts[0].strip()
+        query = parts[1].strip()
+        return (folder if folder else None), (query if query else None)
 
-async def _read_target(ctx, target: str) -> tuple[str, list[str]]:
-    """Read a file or all text files in a folder. Returns (combined_text, file_list)."""
-    # Check if it's a single file
-    try:
-        is_file = await ctx.files.is_file(target)
-    except Exception:
-        is_file = False
-
-    if is_file:
-        try:
-            content = await ctx.files.read(target)
-            return f"=== {target} ===\n{content}\n", [target]
-        except Exception as e:
-            return "", []
-
-    # It's a directory — read all text files
-    try:
-        file_list = await _list_text_files(ctx, target)
-    except Exception:
-        return "", []
-
-    parts = []
-    read_files = []
-    total_chars = 0
-
-    for fpath in file_list[:20]:  # cap at 20 files
-        try:
-            content = await ctx.files.read(fpath)
-        except Exception:
-            continue
-
-        # Truncate large files
-        if len(content) > _MAX_FILE_SIZE:
-            content = content[:_MAX_FILE_SIZE] + "\n... [truncated]"
-
-        if total_chars + len(content) > _MAX_CONTEXT_CHARS:
-            remaining = _MAX_CONTEXT_CHARS - total_chars
-            if remaining > 200:
-                parts.append(f"=== {fpath} ===\n{content[:remaining]}\n... [truncated]")
-                read_files.append(fpath)
-            break
-
-        parts.append(f"=== {fpath} ===\n{content}")
-        read_files.append(fpath)
-        total_chars += len(content)
-
-    return "\n\n".join(parts), read_files
-
-
-async def _list_text_files(ctx, directory: str, recursive: bool = False) -> list[str]:
-    """List text files in a directory."""
-    if recursive:
-        # Use glob for recursive listing
-        all_files = []
-        for ext in _TEXT_EXTENSIONS:
-            try:
-                matches = await ctx.files.glob(f"**/*{ext}", directory=directory)
-                all_files.extend(matches)
-            except Exception:
-                continue
-        return sorted(set(all_files))
-    else:
-        try:
-            entries = await ctx.files.list(directory)
-        except Exception:
-            return []
-        return [
-            os.path.join(directory, e) if directory != "." else e
-            for e in entries
-            if os.path.splitext(e)[1].lower() in _TEXT_EXTENSIONS
-        ]
+    return None, None
 
 
 def _slugify(text: str) -> str:
