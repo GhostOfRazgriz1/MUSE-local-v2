@@ -34,17 +34,28 @@ class HttpClient:
         self._skill_id = skill_id
         self._gateway_url = config.get("gateway_url", "http://127.0.0.1:8100")
 
-    async def get(self, url: str, headers: dict | None = None) -> Response:
-        return await self._request("GET", url, headers=headers)
+    async def get(self, url: str, headers: dict | None = None, params: dict | None = None) -> Response:
+        return await self._request("GET", self._apply_params(url, params), headers=headers)
 
-    async def post(self, url: str, body: Any = None, headers: dict | None = None) -> Response:
-        return await self._request("POST", url, body=body, headers=headers)
+    async def post(self, url: str, body: Any = None, headers: dict | None = None, params: dict | None = None) -> Response:
+        return await self._request("POST", self._apply_params(url, params), body=body, headers=headers)
 
-    async def put(self, url: str, body: Any = None, headers: dict | None = None) -> Response:
-        return await self._request("PUT", url, body=body, headers=headers)
+    async def put(self, url: str, body: Any = None, headers: dict | None = None, params: dict | None = None) -> Response:
+        return await self._request("PUT", self._apply_params(url, params), body=body, headers=headers)
 
-    async def delete(self, url: str, headers: dict | None = None) -> Response:
-        return await self._request("DELETE", url, headers=headers)
+    async def delete(self, url: str, headers: dict | None = None, params: dict | None = None) -> Response:
+        return await self._request("DELETE", self._apply_params(url, params), headers=headers)
+
+    @staticmethod
+    def _apply_params(url: str, params: dict | None) -> str:
+        if not params:
+            return url
+        from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
+        parsed = urlparse(url)
+        existing = parse_qs(parsed.query)
+        existing.update({k: [v] for k, v in params.items()})
+        new_query = urlencode({k: v[0] if len(v) == 1 else v for k, v in existing.items()}, doseq=True)
+        return urlunparse(parsed._replace(query=new_query))
 
     async def _request(
         self, method: str, url: str, body: Any = None, headers: dict | None = None

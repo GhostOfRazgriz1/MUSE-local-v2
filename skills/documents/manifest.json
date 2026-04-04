@@ -1,0 +1,22 @@
+{
+    "name": "Documents",
+    "version": "0.1.0",
+    "description": "Read, search, and answer questions about your local documents and files. Supports text, code, markdown, PDF text, CSV, and JSON files.",
+    "category": "knowledge",
+    "author": "MUSE",
+    "permissions": ["file:read", "memory:read", "memory:write"],
+    "memory_namespaces": ["documents"],
+    "actions": [
+        {"id": "ask", "description": "Answer a question about the contents of a file or folder"},
+        {"id": "search", "description": "Search for content across files in a directory"},
+        {"id": "summarize", "description": "Summarize a document or set of files"},
+        {"id": "index", "description": "Index a folder for faster future searches"}
+    ],
+    "max_tokens": 8000,
+    "timeout_seconds": 120,
+    "isolation_tier": "lightweight",
+    "entry_point": "skill.py",
+    "is_first_party": true,
+    "supports_rollback": false,
+    "idempotent": true
+}
