@@ -291,21 +291,231 @@ async def set_model_override(skill_id: str, body: dict):
 
 @router.get("/providers")
 async def list_providers():
-    """Return LLM providers and their status."""
+    """Return all LLM providers (built-in + custom) and whether a key is configured."""
+    import os
     orchestrator = get_orchestrator()
     registered = set(get_service("provider").providers.keys()) if orchestrator else set()
 
     providers = []
     for prefix, pdef in BUILTIN_PROVIDERS.items():
+        is_registered = prefix in registered
+        # Local provider: no key needed
+        if not pdef.env_var:
+            source = "env" if is_registered else None
+        else:
+            has_env = bool(os.environ.get(pdef.env_var))
+            has_vault = False
+            if orchestrator:
+                stored = await get_service("vault").retrieve_raw(f"{prefix}_api_key")
+                has_vault = stored is not None
+            if has_vault:
+                source = "vault"
+            elif has_env or is_registered:
+                source = "env"
+            else:
+                source = None
         providers.append({
             "id": prefix,
             "name": pdef.name,
             "env_var": pdef.env_var,
-            "source": "env" if prefix in registered else None,
+            "source": source,
             "is_custom": False,
         })
 
+    # Append custom providers
+    if orchestrator:
+        custom = await _load_custom_providers()
+        for cp in custom:
+            cp_id = cp["id"]
+            stored = await get_service("vault").retrieve_raw(f"{cp_id}_api_key")
+            providers.append({
+                "id": cp_id,
+                "name": cp.get("name", cp_id),
+                "env_var": "",
+                "source": "vault" if stored else None,
+                "is_custom": True,
+                "base_url": cp.get("base_url", ""),
+                "api_style": cp.get("api_style", "openai"),
+            })
+
     return {"providers": providers}
+
+
+# ------------------------------------------------------------------
+# Provider API key management
+# ------------------------------------------------------------------
+
+async def _load_custom_providers() -> list[dict]:
+    try:
+        async with get_service("db").execute(
+            "SELECT value FROM user_settings WHERE key = 'custom_providers'"
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return json.loads(row[0])
+    except Exception:
+        pass
+    return []
+
+
+async def _save_custom_providers(providers: list[dict]) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    await get_service("db").execute(
+        "INSERT INTO user_settings (key, value, updated_at) VALUES (?, ?, ?)"
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        ("custom_providers", json.dumps(providers), now),
+    )
+    await get_service("db").commit()
+
+
+@router.put("/providers/{provider_id}/key")
+async def set_provider_key(provider_id: str, body: dict):
+    """Store an API key for a provider and hot-register it."""
+    orchestrator = get_orchestrator()
+    if not orchestrator:
+        raise HTTPException(503, "Not ready")
+
+    secret = body.get("key", "").strip()
+    if not secret:
+        raise HTTPException(400, "key is required")
+
+    pdef = BUILTIN_PROVIDERS.get(provider_id)
+    custom_def = None
+    if pdef is None:
+        custom = await _load_custom_providers()
+        custom_def = next((c for c in custom if c["id"] == provider_id), None)
+        if custom_def is None:
+            raise HTTPException(404, f"Unknown provider '{provider_id}'")
+
+    name = pdef.name if pdef else custom_def["name"]
+    base_url = pdef.base_url if pdef else custom_def["base_url"]
+    api_style = pdef.api_style if pdef else custom_def.get("api_style", "openai")
+
+    await get_service("vault").store(
+        credential_id=f"{provider_id}_api_key",
+        secret=secret,
+        credential_type="api_key",
+        service_name=name,
+    )
+
+    # Hot-register the provider
+    from muse.providers.registry import ProviderRegistry
+    registry: ProviderRegistry = get_service("provider")
+
+    if provider_id == "openrouter" and registry._fallback is not None:
+        registry._fallback._api_key = secret
+    else:
+        old = registry.providers.get(provider_id)
+        if old is not None and hasattr(old, "close"):
+            await old.close()
+
+        if api_style == "anthropic":
+            from muse.providers.anthropic import AnthropicProvider
+            registry.register(provider_id, AnthropicProvider(api_key=secret))
+        else:
+            from muse.providers.openai_compat import OpenAICompatibleProvider
+            registry.register(
+                provider_id,
+                OpenAICompatibleProvider(name=name, api_key=secret, base_url=base_url),
+            )
+
+    return {"status": "stored", "provider": provider_id}
+
+
+@router.delete("/providers/{provider_id}/key")
+async def delete_provider_key(provider_id: str):
+    """Remove a stored API key and unregister the provider."""
+    orchestrator = get_orchestrator()
+    if not orchestrator:
+        raise HTTPException(503, "Not ready")
+
+    await get_service("vault").delete(f"{provider_id}_api_key")
+
+    from muse.providers.registry import ProviderRegistry
+    registry: ProviderRegistry = get_service("provider")
+    if provider_id == "openrouter" and registry._fallback is not None:
+        registry._fallback._api_key = ""
+    elif provider_id in registry.providers:
+        provider = registry.providers[provider_id]
+        if hasattr(provider, "close"):
+            await provider.close()
+        registry.unregister(provider_id)
+
+    return {"status": "deleted", "provider": provider_id}
+
+
+@router.post("/providers/custom")
+async def add_custom_provider(body: dict):
+    """Register a custom OpenAI-compatible provider."""
+    orchestrator = get_orchestrator()
+    if not orchestrator:
+        raise HTTPException(503, "Not ready")
+
+    name = (body.get("name") or "").strip()
+    base_url = (body.get("base_url") or "").strip().rstrip("/")
+    api_key = (body.get("api_key") or "").strip()
+    api_style = body.get("api_style", "openai")
+
+    if not name:
+        raise HTTPException(400, "name is required")
+    if not base_url:
+        raise HTTPException(400, "base_url is required")
+
+    provider_id = "custom_" + re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:25]
+    custom = await _load_custom_providers()
+    existing_ids = {c["id"] for c in custom}
+    base_id = provider_id
+    counter = 1
+    while provider_id in existing_ids or provider_id in BUILTIN_PROVIDERS:
+        provider_id = f"{base_id}_{counter}"
+        counter += 1
+
+    custom.append({"id": provider_id, "name": name, "base_url": base_url, "api_style": api_style})
+    await _save_custom_providers(custom)
+
+    if api_key:
+        await get_service("vault").store(
+            credential_id=f"{provider_id}_api_key",
+            secret=api_key,
+            credential_type="api_key",
+            service_name=name,
+        )
+        from muse.providers.registry import ProviderRegistry
+        registry: ProviderRegistry = get_service("provider")
+        if api_style == "anthropic":
+            from muse.providers.anthropic import AnthropicProvider
+            registry.register(provider_id, AnthropicProvider(api_key=api_key))
+        else:
+            from muse.providers.openai_compat import OpenAICompatibleProvider
+            registry.register(provider_id, OpenAICompatibleProvider(name=name, api_key=api_key, base_url=base_url))
+
+    return {"status": "created", "provider_id": provider_id, "name": name}
+
+
+@router.delete("/providers/custom/{provider_id}")
+async def delete_custom_provider(provider_id: str):
+    """Remove a custom provider and its key."""
+    orchestrator = get_orchestrator()
+    if not orchestrator:
+        raise HTTPException(503, "Not ready")
+
+    custom = await _load_custom_providers()
+    if not any(c["id"] == provider_id for c in custom):
+        raise HTTPException(404, f"Custom provider '{provider_id}' not found")
+
+    custom = [c for c in custom if c["id"] != provider_id]
+    await _save_custom_providers(custom)
+    await get_service("vault").delete(f"{provider_id}_api_key")
+
+    from muse.providers.registry import ProviderRegistry
+    registry: ProviderRegistry = get_service("provider")
+    if provider_id in registry.providers:
+        provider = registry.providers[provider_id]
+        if hasattr(provider, "close"):
+            await provider.close()
+        registry.unregister(provider_id)
+
+    return {"status": "deleted", "provider_id": provider_id}
 
 
 # ------------------------------------------------------------------
