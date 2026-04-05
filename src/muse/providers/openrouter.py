@@ -73,7 +73,9 @@ class OpenRouterProvider:
             payload["response_format"] = {"type": "json_object"}
 
         try:
-            response = await self._client.post("/chat/completions", json=payload)
+            # Inject auth header per-request so hot-updated keys take effect
+            headers = {"Authorization": f"Bearer {self._api_key}"}
+            response = await self._client.post("/chat/completions", json=payload, headers=headers)
         except httpx.HTTPError as exc:
             raise ProviderError(f"HTTP request failed: {exc}") from exc
 
@@ -138,7 +140,8 @@ class OpenRouterProvider:
         }
 
         tokens_out = 0
-        async with self._client.stream("POST", "/chat/completions", json=payload) as response:
+        headers = {"Authorization": f"Bearer {self._api_key}"}
+        async with self._client.stream("POST", "/chat/completions", json=payload, headers=headers) as response:
             if response.status_code != 200:
                 body = await response.aread()
                 logger.error("OpenRouter model list status %d: %s", response.status_code, body[:300])
@@ -179,7 +182,8 @@ class OpenRouterProvider:
             return list(self._model_cache.values())
 
         try:
-            response = await self._client.get("/models")
+            headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+            response = await self._client.get("/models", headers=headers)
         except httpx.HTTPError as exc:
             raise ProviderError(f"Failed to fetch model list: {exc}") from exc
 
