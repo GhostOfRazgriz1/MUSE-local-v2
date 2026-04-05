@@ -75,7 +75,8 @@ def _parse_relative_time(instruction: str) -> tuple[str | None, str | None]:
     else:
         return None, None
 
-    when = (datetime.now(timezone.utc) + delta).isoformat()
+    # Use local time so display makes sense to the user
+    when = (datetime.now().astimezone() + delta).isoformat()
 
     # Extract the "what" — everything before "in N minutes"
     what = re.sub(
@@ -92,16 +93,16 @@ def _parse_relative_time(instruction: str) -> tuple[str | None, str | None]:
 
 async def _set_reminder(ctx, instruction: str) -> dict:
     """Set a new reminder."""
-    now = datetime.now(timezone.utc).isoformat()
+    now_local = datetime.now().astimezone().isoformat()
 
     # Try regex first for simple relative times (exact, no LLM drift)
     when, what = _parse_relative_time(instruction)
     recurring = False
 
     if when is None:
-        # Fall back to LLM for complex times
+        # Fall back to LLM for complex times — pass local time
         result = await ctx.llm.complete(
-            prompt=f"Extract the reminder details. Current time: {now}\n\n"
+            prompt=f"Extract the reminder details. Current time: {now_local}\n\n"
                    f"Request: {instruction}\n\n"
                    f"JSON: {{\"what\": \"...\", \"when\": \"ISO 8601 or unspecified\", "
                    f"\"recurring\": false}}",
@@ -117,12 +118,12 @@ async def _set_reminder(ctx, instruction: str) -> dict:
         when = parsed.get("when", "unspecified")
         recurring = parsed.get("recurring", False)
 
-    key = f"reminder.{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    key = f"reminder.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     reminder = json.dumps({
         "what": what,
         "when": when,
         "recurring": recurring,
-        "created_at": now,
+        "created_at": now_local,
         "status": "active",
     })
 
