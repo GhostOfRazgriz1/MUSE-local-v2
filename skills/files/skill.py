@@ -496,16 +496,20 @@ async def _op_write(ctx, instruction: str, params: dict) -> dict:
                 max_tokens=4000,
             )
 
-    # Auto-detect generation intent — check the instruction regardless of
-    # whether `content` is set, because the LLM router may have leaked
-    # conversation context into the content field.
-    if not should_generate:
-        if re.search(
-            r"\b(?:write|create|generate|make)\s+(?:a\s+)?(?:\w+\s+)*"
-            r"(?:poem|song|story|essay|letter|script|code|report|file|program"
-            r"|calculator|app|page|function|class|module)\b",
-            lower,
-        ):
+    # Auto-detect generation intent — ask the LLM if the user wants
+    # content generated (vs. saving existing content).
+    if not should_generate and not content:
+        verdict = await ctx.llm.complete(
+            prompt=(
+                f"Does this instruction ask you to CREATE or GENERATE new content "
+                f"(like writing a poem, composing lyrics, drafting code, etc.)?\n\n"
+                f"Instruction: \"{instruction}\"\n\n"
+                f"Reply with ONLY 'yes' or 'no'."
+            ),
+            system="Reply with ONLY 'yes' or 'no'.",
+            max_tokens=5,
+        )
+        if verdict.strip().lower().startswith("y"):
             should_generate = True
             generate_prompt = instruction
 

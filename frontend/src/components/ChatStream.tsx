@@ -867,8 +867,13 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
 
                 case "task_killed":
                   return wrapMsg(
-                    <div className="task-notification failed">
-                      Task cancelled
+                    <div className="msg-row agent">
+                      <div className="msg-avatar agent">
+                        <IconBot size={16} />
+                      </div>
+                      <div className="msg-bubble agent">
+                        <MarkdownContent content={`**${(evt as any).skill_name || "Task"}** was cancelled. What would you like me to do instead?`} />
+                      </div>
                     </div>
                   );
 
@@ -927,10 +932,11 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
 
                   const allResponded = group.every((e) => respondedPermissions.has(e.request_id));
                   if (allResponded) {
+                    const denied = (group[0] as any)._denied;
                     return wrapMsg(
-                      <div className="task-notification completed">
+                      <div className={`task-notification ${denied ? "failed" : "completed"}`}>
                         <IconShield size={13} />
-                        Permissions granted — {evt.skill_id}: {group.map((e) => e.permission).join(", ")}
+                        {denied ? "Permission denied" : "Permissions granted"} — {evt.skill_id}
                       </div>
                     );
                   }
@@ -961,10 +967,16 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                       <PermissionActions
                         suggestedMode={(suggestedMode as ApprovalMode) ?? "once"}
                         onAllow={(mode) => {
-                          for (const e of group) handlePermission(e.request_id, true, mode);
+                          for (const e of group) {
+                            handlePermission(e.request_id, true, mode);
+                            (e as any)._denied = false;
+                          }
                         }}
                         onDeny={() => {
-                          handlePermission(group[0].request_id, false);
+                          for (const e of group) {
+                            handlePermission(e.request_id, false);
+                            (e as any)._denied = true;
+                          }
                         }}
                       />
                     </div>

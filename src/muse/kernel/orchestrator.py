@@ -2952,16 +2952,32 @@ class Kernel:
             for rid in pending.get("all_request_ids", []):
                 self._pending_permission_tasks.pop(rid, None)
 
-            # Record the denial in conversation history so the LLM knows
-            # this request was rejected and doesn't keep referencing it.
+            skill_id = pending.get("skill_id", "the skill")
+            msg = pending.get("message", "")[:100]
+
+            # Record the denial in conversation history and persist to DB
+            deny_msg = f"[Permission denied for {skill_id} — request was not executed: {msg}]"
             self._conversation_history.append({
                 "role": "assistant",
-                "content": f"[Permission denied — request was not executed: {pending['message'][:100]}]",
+                "content": deny_msg,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
+            if self._session_id:
+                try:
+                    await self._session_repo.add_message(
+                        self._session_id, "assistant", deny_msg,
+                        event_type="permission_denied",
+                        metadata={"skill_id": skill_id},
+                    )
+                except Exception:
+                    pass
             await self._compaction.incremental_compact(self._conversation_history)
 
-            yield {"type": "error", "content": "Permission denied. Cannot execute the request."}
+            yield {
+                "type": "response",
+                "content": f"**{skill_id}** was denied permission. What would you like me to do instead?",
+                "tokens_in": 0, "tokens_out": 0, "model": "",
+            }
 
     # ------------------------------------------------------------------
     # User responses to skill questions (called from UI)
@@ -3061,8 +3077,30 @@ class Kernel:
     # ------------------------------------------------------------------
 
     async def kill_task(self, task_id: str) -> None:
+        task = await self._task_manager.get_task(task_id)
+        skill_name = task.skill_id if task else "Task"
         await self._task_manager.kill(task_id)
         await self._sandbox.kill(task_id)
+
+        # Record in conversation history and persist to DB
+        cancel_msg = f"[{skill_name} was cancelled by the user]"
+        self._conversation_history.append({
+            "role": "assistant",
+            "content": cancel_msg,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        if self._session_id:
+            try:
+                await self._session_repo.add_message(
+                    self._session_id, "assistant", cancel_msg,
+                    event_type="task_killed",
+                    metadata={"skill_id": skill_name, "task_id": task_id},
+                )
+            except Exception:
+                pass
+
+        if self._mood == "working":
+            await self.set_mood("neutral", force=True)
 
     def get_active_tasks(self) -> list[TaskInfo]:
         return self._task_manager.get_active_tasks()

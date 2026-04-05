@@ -40,7 +40,15 @@ async def task_history(limit: int = 50, orchestrator=Depends(require_orchestrato
 @router.post("/{task_id}/kill")
 async def kill_task(task_id: str, orchestrator=Depends(require_orchestrator)):
     """Kill a running task."""
+    task = await orchestrator._task_manager.get_task(task_id)
+    skill_name = task.skill_id if task else "Task"
     await orchestrator.kill_task(task_id)
+    # Broadcast via message bus so all WS subscribers (ChatStream, TaskTray) update
+    await orchestrator._emit_event({
+        "type": "task_killed",
+        "task_id": task_id,
+        "skill_name": skill_name,
+    })
     return {"status": "killed", "task_id": task_id}
 
 

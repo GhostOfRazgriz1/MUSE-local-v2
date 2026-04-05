@@ -65,6 +65,9 @@ export const TaskTray: React.FC<TaskTrayProps> = ({ events }) => {
         } else if (evt.type === "task_failed") {
           const existing = next.get(evt.task_id);
           if (existing) next.set(evt.task_id, { ...existing, status: "failed", error: evt.error });
+        } else if (evt.type === "task_killed") {
+          const existing = next.get(evt.task_id);
+          if (existing) next.set(evt.task_id, { ...existing, status: "failed", error: "Cancelled" });
         }
       }
       return next;
