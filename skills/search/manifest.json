@@ -4,7 +4,7 @@
     "description": "Search the web for information, look things up online, research topics. Ask about anything: people, places, facts, current events, technical questions.",
     "category": "search",
     "author": "MUSE",
-    "permissions": ["web:fetch", "memory:read", "memory:write"],
+    "permissions": ["web:fetch", "memory:read", "memory:write", "credential:read"],
     "memory_namespaces": ["search"],
     "allowed_domains": [
         "api.tavily.com",
