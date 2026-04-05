@@ -103,8 +103,12 @@ class DreamingManager:
                 # Flush usage patterns to disk before consolidation
                 await self._registry.get("patterns").flush()
 
-                await self._consolidate(session_id, history)
-                await self._analyze_patterns()
+                # Run consolidation + pattern analysis in parallel —
+                # they read independent data and make separate LLM calls.
+                await asyncio.gather(
+                    self._consolidate(session_id, history),
+                    self._analyze_patterns(),
+                )
                 self._consolidated_sessions.add(session_id)
             except Exception as e:
                 logger.error("Memory consolidation failed: %s", e, exc_info=True)
@@ -221,9 +225,9 @@ class DreamingManager:
         # Run demotion + summary storage concurrently
         async def _store_memories():
             if facts:
-                inserted = await self._registry.get("demotion").demote_to_cache(facts)
-                await self._registry.get("demotion").flush_cache_to_disk()
-                return inserted
+                # Insert into cache — the periodic flush (every 30s) will
+                # persist to disk; no need to flush immediately.
+                return await self._registry.get("demotion").demote_to_cache(facts)
             return []
 
         async def _store_summary():

@@ -74,7 +74,11 @@ export const TaskTray: React.FC<TaskTrayProps> = ({ events }) => {
     });
   }, [events]);
 
+  // Only tick elapsed timer when at least one task is running.
+  const hasRunning = Array.from(tasks.values()).some((t) => t.status === "running");
+
   useEffect(() => {
+    if (!hasRunning) return;
     intervalRef.current = setInterval(() => {
       setTasks((prev) => {
         let changed = false;
@@ -92,7 +96,7 @@ export const TaskTray: React.FC<TaskTrayProps> = ({ events }) => {
       });
     }, 1000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, []);
+  }, [hasRunning]);
 
   const handleKill = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation();

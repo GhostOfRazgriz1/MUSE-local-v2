@@ -9,6 +9,7 @@ Approval modes
   permission check.
 """
 
+import functools
 import logging
 import re
 import uuid
@@ -84,6 +85,15 @@ _SUGGESTED_MODE: dict[str, str] = {
     "high": "once",
     "critical": "once",
 }
+
+
+@functools.lru_cache(maxsize=256)
+def _classify_risk(permission: str) -> str:
+    """Classify *permission* into a risk tier (cached, deterministic)."""
+    for pattern, tier in _RISK_RULES:
+        if re.match(pattern, permission):
+            return tier
+    return "high"
 
 
 class PermissionManager:
@@ -252,12 +262,8 @@ class PermissionManager:
     # ------------------------------------------------------------------
 
     async def get_risk_tier(self, permission: str) -> str:
-        """Classify *permission* into a risk tier using pattern rules."""
-        for pattern, tier in _RISK_RULES:
-            if re.match(pattern, permission):
-                return tier
-        # Default to high for unrecognised patterns.
-        return "high"
+        """Classify *permission* into a risk tier (cached)."""
+        return _classify_risk(permission)
 
     async def get_suggested_mode(self, risk_tier: str) -> str:
         """Map a risk tier to its suggested approval mode."""

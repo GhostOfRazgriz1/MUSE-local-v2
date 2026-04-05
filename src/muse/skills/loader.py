@@ -26,6 +26,7 @@ class SkillLoader:
     def __init__(self, db: aiosqlite.Connection, skills_dir: Path) -> None:
         self._db = db
         self._skills_dir = skills_dir
+        self._manifest_cache: dict[str, SkillManifest | None] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -47,6 +48,7 @@ class SkillLoader:
         shutil.copytree(skill_path, dest)
 
         await self._upsert_skill_row(skill_id, manifest)
+        self._manifest_cache.pop(skill_id, None)
         logger.info("Installed skill %s v%s", skill_id, manifest.version)
         return manifest
 
@@ -59,6 +61,7 @@ class SkillLoader:
             "DELETE FROM installed_skills WHERE skill_id = ?", (skill_id,),
         )
         await self._db.commit()
+        self._manifest_cache.pop(skill_id, None)
         logger.info("Uninstalled skill %s", skill_id)
 
     async def get_installed(self) -> list[dict[str, Any]]:
@@ -79,15 +82,17 @@ class SkillLoader:
         return results
 
     async def get_manifest(self, skill_id: str) -> SkillManifest | None:
-        """Return the manifest for an installed skill, or ``None``."""
+        """Return the manifest for an installed skill, or ``None`` (cached)."""
+        if skill_id in self._manifest_cache:
+            return self._manifest_cache[skill_id]
         cursor = await self._db.execute(
             "SELECT manifest_json FROM installed_skills WHERE skill_id = ?",
             (skill_id,),
         )
         row = await cursor.fetchone()
-        if row is None:
-            return None
-        return SkillManifest.from_json(json.loads(row[0]))
+        result = SkillManifest.from_json(json.loads(row[0])) if row else None
+        self._manifest_cache[skill_id] = result
+        return result
 
     async def update_skill(self, skill_id: str, skill_path: Path) -> SkillManifest:
         """Update an already-installed skill from a new source path."""
@@ -103,6 +108,7 @@ class SkillLoader:
         shutil.copytree(skill_path, dest)
 
         await self._upsert_skill_row(skill_id, manifest, is_update=True)
+        self._manifest_cache.pop(skill_id, None)
         logger.info("Updated skill %s to v%s", skill_id, manifest.version)
         return manifest
 

@@ -28,6 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_namespace_key ON memory_entries(namespace,
 CREATE INDEX IF NOT EXISTS idx_memory_relevance ON memory_entries(relevance_score DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_accessed ON memory_entries(accessed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_superseded ON memory_entries(superseded_by);
+CREATE INDEX IF NOT EXISTS idx_memory_access_count ON memory_entries(access_count DESC) WHERE superseded_by IS NULL;
 
 -- Conversation archive: compressed conversation summaries
 CREATE TABLE IF NOT EXISTS conversation_archive (
@@ -132,6 +133,8 @@ CREATE TABLE IF NOT EXISTS credential_registry (
     last_used_at TEXT,
     expires_at TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_cred_linked_perm ON credential_registry(linked_permission);
 
 -- Installed skills
 CREATE TABLE IF NOT EXISTS installed_skills (
