@@ -78,13 +78,14 @@ def _parse_relative_time(instruction: str) -> tuple[str | None, str | None]:
     # Use local time so display makes sense to the user
     when = (datetime.now().astimezone() + delta).isoformat()
 
-    # Extract the "what" — everything before "in N minutes"
+    # Extract the "what" — strip prefixes and the time suffix
     what = re.sub(
-        r"\s*(?:remind\s+me\s+to\s+|remind\s+me\s+)",
+        r"^\s*(?:can\s+you\s+|please\s+|could\s+you\s+)?"
+        r"(?:remind\s+me\s+to\s+|remind\s+me\s+|set\s+a\s+reminder\s+to\s+)?",
         "", instruction, flags=re.IGNORECASE,
     ).strip()
     what = re.sub(
-        r"\s+in\s+\d+\s+(?:minute|min|hour|hr|second|sec|day)s?\s*\.?$",
+        r"\s+in\s+\d+\s+(?:minute|min|hour|hr|second|sec|day)s?\s*[?.!]*$",
         "", what, flags=re.IGNORECASE,
     ).strip()
 
@@ -95,28 +96,40 @@ async def _set_reminder(ctx, instruction: str) -> dict:
     """Set a new reminder."""
     now_local = datetime.now().astimezone().isoformat()
 
-    # Try regex first for simple relative times (exact, no LLM drift)
-    when, what = _parse_relative_time(instruction)
-    recurring = False
+    # Use regex only for precise time calculation (not for "what" extraction)
+    when_from_regex, _ = _parse_relative_time(instruction)
+    friendly_override = None
 
-    if when is None:
-        # Fall back to LLM for complex times — pass local time
-        result = await ctx.llm.complete(
-            prompt=f"Extract the reminder details. Current time: {now_local}\n\n"
-                   f"Request: {instruction}\n\n"
-                   f"JSON: {{\"what\": \"...\", \"when\": \"ISO 8601 or unspecified\", "
-                   f"\"recurring\": false}}",
-            system="Extract structured reminder data. Reply with ONLY valid JSON.",
-        )
+    # Capture the original relative time phrase for display
+    import re as _re
+    m = _re.search(r"in\s+(\d+)\s+(minute|min|hour|hr|second|sec|day)s?", instruction, _re.IGNORECASE)
+    if m:
+        amount = int(m.group(1))
+        unit = m.group(2).lower()
+        unit_display = {"minute": "minute", "min": "minute", "hour": "hour",
+                        "hr": "hour", "second": "second", "sec": "second", "day": "day"}.get(unit, unit)
+        friendly_override = f"in {amount} {unit_display}{'s' if amount != 1 else ''}"
 
-        try:
-            parsed = json.loads(result)
-        except json.JSONDecodeError:
-            parsed = {"what": instruction, "when": "unspecified", "recurring": False}
+    # Always use LLM for "what" extraction — regex is fragile on natural language
+    result = await ctx.llm.complete(
+        prompt=f"Extract the reminder details. Current time: {now_local}\n\n"
+               f"Request: {instruction}\n\n"
+               f"JSON: {{\"what\": \"short description of what to remember\", "
+               f"\"when\": \"ISO 8601 datetime or 'unspecified'\", "
+               f"\"recurring\": false}}",
+        system="Extract structured reminder data. Reply with ONLY valid JSON.",
+    )
 
-        what = parsed.get("what", instruction)
-        when = parsed.get("when", "unspecified")
-        recurring = parsed.get("recurring", False)
+    try:
+        parsed = json.loads(result)
+    except json.JSONDecodeError:
+        parsed = {"what": instruction, "when": "unspecified", "recurring": False}
+
+    what = parsed.get("what", instruction)
+    recurring = parsed.get("recurring", False)
+
+    # Use regex-computed time if available (more precise), else LLM's time
+    when = when_from_regex or parsed.get("when", "unspecified")
 
     key = f"reminder.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     reminder = json.dumps({
@@ -129,8 +142,12 @@ async def _set_reminder(ctx, instruction: str) -> dict:
 
     await ctx.memory.write(key, reminder, value_type="json")
 
-    friendly = _friendly_when(when)
-    time_str = f" ({friendly})" if friendly else ""
+    # Use the original phrase for display, not recalculated relative time
+    time_str = f" ({friendly_override})" if friendly_override else ""
+    if not time_str:
+        friendly = _friendly_when(when)
+        time_str = f" ({friendly})" if friendly else ""
+
     return {
         "payload": {"key": key, "what": what, "when": when},
         "summary": f"Reminder set{time_str}: \"{what}\"",
