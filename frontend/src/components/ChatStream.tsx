@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { IconSend, IconBot, IconShield, IconAlertCircle, IconCopy, IconClipboardCheck, IconCheck, IconChevronDown, IconGitBranch, IconNavigation, IconClock, IconPaperclip, IconFileText, IconDownload, IconX, IconRefresh } from "./Icons";
 import { renderWithFileChips } from "./FileChip";
+import { useLocale } from "../i18n";
 import type { ChatEvent, DisplayMessage, ApprovalMode } from "../types/events";
 
 interface ChatStreamProps {
@@ -87,6 +88,7 @@ function parseFileCard(content: string): {
 
 /** File preview card for skill-created files. */
 const FileCard: React.FC<{ info: ReturnType<typeof parseFileCard> & {} }> = ({ info }) => {
+  const { t } = useLocale();
   const handleReveal = async () => {
     try {
       const { apiFetch } = await import("../hooks/useApiToken");
@@ -124,12 +126,12 @@ const FileCard: React.FC<{ info: ReturnType<typeof parseFileCard> & {} }> = ({ i
       )}
       <div className="file-card-actions">
         <button className="btn btn-ghost btn-sm" onClick={handleReveal}>
-          Show in folder
+          {t("chat_show_in_folder")}
         </button>
         <button className="btn btn-ghost btn-sm" onClick={handleDownload}>
-          <IconDownload size={12} /> Download
+          <IconDownload size={12} /> {t("chat_download")}
         </button>
-        <CopyButton text={info.preview || ""} className="msg-copy-btn" label="Copy content" />
+        <CopyButton text={info.preview || ""} className="msg-copy-btn" label={t("chat_copy_message")} />
       </div>
     </div>
   );
@@ -137,6 +139,7 @@ const FileCard: React.FC<{ info: ReturnType<typeof parseFileCard> & {} }> = ({ i
 
 /** Render markdown content for agent messages. */
 const MarkdownContent: React.FC<{ content: string }> = React.memo(({ content }) => {
+  const { t } = useLocale();
   const cleaned = stripToolBlocks(content);
   return (
     <div className="md-content">
@@ -172,7 +175,7 @@ const MarkdownContent: React.FC<{ content: string }> = React.memo(({ content }) 
               <div className="md-code-block-wrapper">
                 <div className="code-block-header">
                   {lang && <span className="code-lang-label">{lang}</span>}
-                  <CopyButton text={codeText} className="code-copy-btn" label="Copy code" />
+                  <CopyButton text={codeText} className="code-copy-btn" label={t("chat_copy_code")} />
                 </div>
                 <pre className="md-code-block">{children}</pre>
               </div>
@@ -246,6 +249,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   messages,
   setMessages,
 }) => {
+  const { t } = useLocale();
   const [input, setInput] = useState("");
   const [isThinking, setIsThinking] = useState(false);
   const [thinkingElapsed, setThinkingElapsed] = useState(0);
@@ -643,7 +647,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
         <div className="drag-overlay">
           <div className="drag-overlay-content">
             <IconPaperclip size={32} />
-            <div>Drop files to attach</div>
+            <div>{t("chat_drop_files")}</div>
           </div>
         </div>
       )}
@@ -651,7 +655,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
       {!connected && (
         <div className="chat-disconnected-bar" role="alert" aria-live="assertive">
           <IconAlertCircle size={14} />
-          Disconnected — reconnecting...
+          {t("chat_disconnected")}
         </div>
       )}
 
@@ -660,7 +664,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
           <button
             className="scroll-to-bottom"
             onClick={() => messageEndRef.current?.scrollIntoView({ behavior: "smooth" })}
-            aria-label="Scroll to bottom"
+            aria-label={t("chat_scroll_bottom")}
           >
             <IconChevronDown size={18} />
           </button>
@@ -671,7 +675,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
               <IconBot size={28} />
             </div>
             {connected ? (
-              <div className="typing-indicator" aria-label="Agent is typing">
+              <div className="typing-indicator" aria-label={t("chat_typing")}>
                 <span /><span /><span />
               </div>
             ) : (
@@ -753,14 +757,14 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                         )}
                         <div className="msg-footer">
                           {evt.model && <span className="msg-model">{evt.model}</span>}
-                          {!fileInfo && <CopyButton text={evt.content} className="msg-copy-btn" label="Copy message" />}
+                          {!fileInfo && <CopyButton text={evt.content} className="msg-copy-btn" label={t("chat_copy_message")} />}
                           {/* Regenerate — only on the last assistant response */}
                           {i === messages.length - 1 && (
                             <button
                               className="msg-regenerate-btn"
                               onClick={onRegenerate}
-                              title="Regenerate response"
-                              aria-label="Regenerate response"
+                              title={t("chat_regenerate")}
+                              aria-label={t("chat_regenerate")}
                             >
                               <IconRefresh size={13} />
                             </button>
@@ -769,8 +773,8 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                             <button
                               className="msg-fork-btn"
                               onClick={() => onFork(msg._dbId!)}
-                              title="Fork from this message"
-                              aria-label="Fork conversation from this message"
+                              title={t("chat_fork")}
+                              aria-label={t("chat_fork")}
                             >
                               <IconGitBranch size={13} />
                             </button>
@@ -1243,7 +1247,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                 <IconNavigation size={14} />
                 <input
                   className="steering-input"
-                  placeholder="Redirect the plan..."
+                  placeholder={t("chat_steer_placeholder")}
                   value={steerInput}
                   onChange={(e) => setSteerInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -1308,8 +1312,8 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
             className="attach-btn"
             onClick={() => fileInputRef.current?.click()}
             disabled={!connected}
-            title="Attach files"
-            aria-label="Attach files"
+            title={t("chat_attach")}
+            aria-label={t("chat_attach")}
           >
             <IconPaperclip size={16} />
           </button>
@@ -1322,15 +1326,15 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
               requestAnimationFrame(adjustTextareaHeight);
             }}
             onKeyDown={handleKeyDown}
-            placeholder={connected ? "Message MUSE..." : "Connecting..."}
+            placeholder={connected ? t("chat_placeholder") : t("chat_placeholder_offline")}
             disabled={!connected}
           />
           <button
             className="send-btn"
             onClick={handleSend}
             disabled={!connected || (!input.trim() && attachedFiles.length === 0) || isUploading}
-            title="Send message"
-            aria-label="Send message"
+            title={t("chat_send")}
+            aria-label={t("chat_send")}
           >
             <IconSend size={16} />
           </button>
@@ -1387,6 +1391,7 @@ const PermissionActions: React.FC<{
 const SkillTextInput: React.FC<{ onSubmit: (text: string) => void }> = ({
   onSubmit,
 }) => {
+  const { t } = useLocale();
   const [value, setValue] = useState("");
   return (
     <div className="skill-text-input">
@@ -1399,7 +1404,7 @@ const SkillTextInput: React.FC<{ onSubmit: (text: string) => void }> = ({
             onSubmit(value.trim());
           }
         }}
-        placeholder="Type your answer..."
+        placeholder={t("chat_answer_placeholder")}
         autoFocus
       />
       <button

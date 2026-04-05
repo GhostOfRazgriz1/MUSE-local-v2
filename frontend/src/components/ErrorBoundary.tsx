@@ -1,4 +1,7 @@
 import React from "react";
+import en from "../i18n/en";
+import zh from "../i18n/zh";
+import { detectLocale } from "../i18n";
 
 interface State {
   hasError: boolean;
@@ -21,6 +24,7 @@ export class ErrorBoundary extends React.Component<
 
   render() {
     if (this.state.hasError) {
+      const strings = detectLocale() === "zh" ? zh : en;
       return (
         <div
           style={{
@@ -36,10 +40,10 @@ export class ErrorBoundary extends React.Component<
           }}
         >
           <h2 style={{ color: "var(--text-primary, #eee)", margin: 0 }}>
-            Something went wrong
+            {strings.error_title}
           </h2>
           <p style={{ margin: 0, maxWidth: 400 }}>
-            {this.state.error?.message || "An unexpected error occurred."}
+            {this.state.error?.message || strings.error_message}
           </p>
           <button
             onClick={() => this.setState({ hasError: false, error: null })}
@@ -54,7 +58,7 @@ export class ErrorBoundary extends React.Component<
               fontSize: 14,
             }}
           >
-            Try Again
+            {strings.error_try_again}
           </button>
         </div>
       );

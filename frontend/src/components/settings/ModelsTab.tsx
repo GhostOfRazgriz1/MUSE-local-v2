@@ -10,6 +10,7 @@ import {
   IconX,
 } from "../Icons";
 import { apiFetch } from "../../hooks/useApiToken";
+import { useLocale } from "../../i18n";
 import { SettingsSection, SettingsLoader, ModelInfo } from "./shared";
 
 /* ─── Models Tab ─── */
@@ -35,6 +36,7 @@ function ModelsTab() {
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [gallerySearch, setGallerySearch] = useState("");
+  const { t } = useLocale();
 
   const fetchModels = useCallback(() => {
     apiFetch("/api/settings/models")
@@ -66,7 +68,7 @@ function ModelsTab() {
         setDefaultModel(settingsRes.settings?.default_model || "");
         setProviders(providersRes.providers || []);
       })
-      .catch(() => setLoadError("Failed to load settings. Check your connection."))
+      .catch(() => setLoadError("load_error"))
       .finally(() => setLoading(false));
   }, []);
 
@@ -143,9 +145,9 @@ function ModelsTab() {
       <div className="settings-tab">
         <div className="settings-error-state">
           <IconAlertCircle size={20} />
-          <span>{loadError}</span>
+          <span>{t("settings_failed_load")}</span>
           <button className="btn btn-sm btn-primary" onClick={() => window.location.reload()}>
-            Retry
+            {t("retry")}
           </button>
         </div>
       </div>
@@ -164,16 +166,16 @@ function ModelsTab() {
   return (
     <div className="settings-tab">
       <div className="settings-tab-header">
-        <h2>Models</h2>
-        <p>Configure your AI provider and choose which model powers your agent.</p>
+        <h2>{t("settings_models")}</h2>
+        <p>{t("settings_models_desc")}</p>
       </div>
 
       {/* ═══ SIMPLE VIEW ═══ */}
 
       {/* All providers */}
       <SettingsSection
-        title="Providers"
-        description="Connect your AI providers. Keys are stored securely in your OS keychain."
+        title={t("settings_providers")}
+        description={t("settings_providers_desc")}
       >
         <div className="provider-keys-list">
           {[...activeProviders, ...inactiveProviders].map((p) => (
@@ -189,10 +191,10 @@ function ModelsTab() {
       </SettingsSection>
 
       {/* Default model — only from active providers */}
-      <SettingsSection title="Model" description="The AI model used for chat and tasks.">
+      <SettingsSection title={t("settings_model")} description={t("settings_model_desc")}>
         {activeModels.length === 0 ? (
           <div className="settings-empty-state">
-            No models available. Connect a provider above first.
+            {t("settings_no_models")}
           </div>
         ) : (
           <div className="settings-field">
@@ -201,14 +203,14 @@ function ModelsTab() {
               grouped={activeGrouped}
               value={defaultModel}
               onChange={saveDefaultModel}
-              placeholder="Auto (recommended)"
+              placeholder={t("settings_auto_recommended")}
             />
             {defaultModel && models.find((m) => m.id === defaultModel) && (
               <div className="model-details">
                 <ModelCard model={models.find((m) => m.id === defaultModel)!} formatPrice={formatPrice} />
               </div>
             )}
-            {saving && <span className="settings-saving">Saving...</span>}
+            {saving && <span className="settings-saving">{t("saving")}</span>}
           </div>
         )}
       </SettingsSection>
@@ -220,7 +222,7 @@ function ModelsTab() {
           onClick={() => setAdvancedOpen(!advancedOpen)}
         >
           {advancedOpen ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-          <span>Advanced settings</span>
+          <span>{t("settings_advanced")}</span>
         </button>
       </div>
 
@@ -229,8 +231,8 @@ function ModelsTab() {
           {/* Per-skill overrides — also filtered to active providers */}
           {skills.length > 0 && activeModels.length > 0 && (
             <SettingsSection
-              title="Per-Skill Model Overrides"
-              description="Assign a specific model to individual skills. Leave empty to use the default."
+              title={t("settings_per_skill")}
+              description={t("settings_per_skill_desc")}
             >
               <div className="override-list">
                 {skills.map((skill) => (
@@ -242,7 +244,7 @@ function ModelsTab() {
                         grouped={activeGrouped}
                         value={overrides[skill.id] || ""}
                         onChange={(v) => saveOverride(skill.id, v)}
-                        placeholder="Default"
+                        placeholder={t("settings_default_model")}
                       />
                     </div>
                   </div>
