@@ -46,27 +46,76 @@ async def run(ctx) -> dict:
         return await _set_reminder(ctx, instruction)
 
 
+def _parse_relative_time(instruction: str) -> tuple[str | None, str | None]:
+    """Try to parse relative times like 'in 5 minutes' without LLM.
+
+    Returns (when_iso, what) or (None, None) if not a simple relative time.
+    """
+    import re
+    from datetime import timedelta
+
+    m = re.search(
+        r"in\s+(\d+)\s+(minute|min|hour|hr|second|sec|day)s?",
+        instruction, re.IGNORECASE,
+    )
+    if not m:
+        return None, None
+
+    amount = int(m.group(1))
+    unit = m.group(2).lower()
+
+    if unit in ("minute", "min"):
+        delta = timedelta(minutes=amount)
+    elif unit in ("hour", "hr"):
+        delta = timedelta(hours=amount)
+    elif unit in ("second", "sec"):
+        delta = timedelta(seconds=amount)
+    elif unit == "day":
+        delta = timedelta(days=amount)
+    else:
+        return None, None
+
+    when = (datetime.now(timezone.utc) + delta).isoformat()
+
+    # Extract the "what" — everything before "in N minutes"
+    what = re.sub(
+        r"\s*(?:remind\s+me\s+to\s+|remind\s+me\s+)",
+        "", instruction, flags=re.IGNORECASE,
+    ).strip()
+    what = re.sub(
+        r"\s+in\s+\d+\s+(?:minute|min|hour|hr|second|sec|day)s?\s*\.?$",
+        "", what, flags=re.IGNORECASE,
+    ).strip()
+
+    return when, what or instruction
+
+
 async def _set_reminder(ctx, instruction: str) -> dict:
     """Set a new reminder."""
-    # Use LLM to extract reminder details
     now = datetime.now(timezone.utc).isoformat()
-    result = await ctx.llm.complete(
-        prompt=f"Extract the reminder details from this request. Current time: {now}\n\n"
-               f"Request: {instruction}\n\n"
-               f"Respond with JSON: {{\"what\": \"description of what to remember\", "
-               f"\"when\": \"ISO 8601 datetime or 'unspecified'\", "
-               f"\"recurring\": false}}",
-        system="Extract structured reminder data. Respond only with valid JSON.",
-    )
 
-    try:
-        parsed = json.loads(result)
-    except json.JSONDecodeError:
-        parsed = {"what": instruction, "when": "unspecified", "recurring": False}
+    # Try regex first for simple relative times (exact, no LLM drift)
+    when, what = _parse_relative_time(instruction)
+    recurring = False
 
-    what = parsed.get("what", instruction)
-    when = parsed.get("when", "unspecified")
-    recurring = parsed.get("recurring", False)
+    if when is None:
+        # Fall back to LLM for complex times
+        result = await ctx.llm.complete(
+            prompt=f"Extract the reminder details. Current time: {now}\n\n"
+                   f"Request: {instruction}\n\n"
+                   f"JSON: {{\"what\": \"...\", \"when\": \"ISO 8601 or unspecified\", "
+                   f"\"recurring\": false}}",
+            system="Extract structured reminder data. Reply with ONLY valid JSON.",
+        )
+
+        try:
+            parsed = json.loads(result)
+        except json.JSONDecodeError:
+            parsed = {"what": instruction, "when": "unspecified", "recurring": False}
+
+        what = parsed.get("what", instruction)
+        when = parsed.get("when", "unspecified")
+        recurring = parsed.get("recurring", False)
 
     key = f"reminder.{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     reminder = json.dumps({
