@@ -174,8 +174,9 @@ class SemanticIntentClassifier:
             f'{{"action": "none"}}  — general chat, no skill needed\n'
             f'{{"action": "single", "skill": "<skill_id>"}}  — one skill handles it\n'
             f'{{"action": "multi", "sub_tasks": ['
-            f'{{"skill_id": "...", "instruction": "...", "depends_on": []}},'
-            f"...]}}  — 2-3 tasks needed in a clear combination\n"
+            f'{{"skill_id": "Search", "instruction": "search for X", "depends_on": []}},'
+            f'{{"skill_id": "Files", "instruction": "save results to file.md", "depends_on": [0]}}'
+            f"]}}  — 2-3 tasks. depends_on=[0] means task 1 waits for task 0's result\n"
             f'{{"action": "goal"}}  — complex goal requiring a multi-step plan '
             f"(research + analysis + output, or any task needing 4+ steps)\n"
             f'{{"action": "clarify", "question": "..."}}  — the request is ambiguous '
