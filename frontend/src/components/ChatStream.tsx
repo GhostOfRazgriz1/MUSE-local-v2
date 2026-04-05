@@ -338,8 +338,9 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
       if (evt.type === "task_started" && !("sub_task_index" in evt)) {
         skillsStarted.push({ skill: evt.skill_name, taskId: evt.task_id });
       }
-      if (evt.type === "task_completed" || evt.type === "task_failed") {
+      if (evt.type === "task_completed" || evt.type === "task_failed" || evt.type === "task_killed") {
         skillsEnded.push(evt.task_id);
+        nextThinking = false;
       }
       if (evt.type === "multi_task_completed") {
         clearAllSkills = true;
@@ -454,6 +455,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
           evt.type === "task_started" ||
           evt.type === "task_completed" ||
           evt.type === "task_failed" ||
+          evt.type === "task_killed" ||
           evt.type === "permission_request" ||
           evt.type === "skill_question" ||
           evt.type === "skill_confirm" ||
@@ -863,6 +865,13 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   );
                 }
 
+                case "task_killed":
+                  return wrapMsg(
+                    <div className="task-notification failed">
+                      Task cancelled
+                    </div>
+                  );
+
                 case "multi_task_started":
                   return wrapMsg(
                     <div className="task-notification started">
@@ -895,21 +904,24 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
 
                 case "permission_request": {
                   // ── Batch: group consecutive permission_requests for same skill ──
+                  // Only the LAST event in a consecutive run renders the card
+                  // (it has the complete picture). Earlier ones are hidden.
+                  // This avoids the stale-render bug where the first event
+                  // renders with an incomplete group on an earlier React cycle.
+                  const nextMsg = i + 1 < messages.length ? messages[i + 1] as ChatEvent : null;
+                  if (nextMsg?.type === "permission_request" && nextMsg.skill_id === evt.skill_id) {
+                    return null; // a later sibling will render the full group
+                  }
+
+                  // Collect the full group by scanning backwards
                   type PermEvt = typeof evt;
                   const group: PermEvt[] = [evt];
-                  for (let j = i + 1; j < messages.length; j++) {
-                    const next = messages[j] as ChatEvent;
-                    if (next.type === "permission_request" && next.skill_id === evt.skill_id) {
-                      group.push(next);
+                  for (let j = i - 1; j >= 0; j--) {
+                    const prev = messages[j] as ChatEvent;
+                    if (prev.type === "permission_request" && prev.skill_id === evt.skill_id) {
+                      group.unshift(prev);
                     } else {
                       break;
-                    }
-                  }
-                  // If this event is part of a group but not the first, skip it
-                  if (i > 0) {
-                    const prev = messages[i - 1] as ChatEvent;
-                    if (prev.type === "permission_request" && prev.skill_id === evt.skill_id) {
-                      return null; // rendered by the group leader
                     }
                   }
 

@@ -582,6 +582,9 @@ class Kernel:
         First-party skills ship with the agent — their permissions are
         known and trusted.  Users shouldn't have to approve memory:read
         for Notes or web:fetch for Search on every session.
+
+        Respects explicit user revocations: if a grant was previously
+        revoked, it is NOT re-granted on restart.
         """
         installed = await self._skill_loader.get_installed()
         granted_count = 0
@@ -593,6 +596,16 @@ class Kernel:
             for perm in manifest.get("permissions", []):
                 check = await self._permissions.check_permission(skill_id, perm)
                 if not check.allowed:
+                    # Don't re-grant if the user explicitly revoked this permission
+                    async with self._db.execute(
+                        "SELECT 1 FROM permission_grants "
+                        "WHERE skill_id = ? AND permission = ? AND revoked_at IS NOT NULL "
+                        "LIMIT 1",
+                        (skill_id, perm),
+                    ) as cursor:
+                        was_revoked = await cursor.fetchone()
+                    if was_revoked:
+                        continue  # User explicitly revoked — respect it
                     await self._permissions.permission_repo.grant(
                         skill_id=skill_id,
                         permission=perm,
@@ -1461,7 +1474,9 @@ class Kernel:
             yield {"type": "error", "content": f"Skill '{skill_id}' not found."}
             return
 
-        # Permission check — skip if resuming after permission approval
+        # Permission pre-check — skip if resuming after permission approval.
+        # Note: _execute_sub_task also enforces permissions as a safety net,
+        # but this early check avoids spawning a task just to block it.
         if not skip_permission_check:
             missing_perms = []
             for perm in manifest.permissions:
@@ -1925,12 +1940,16 @@ class Kernel:
         skill_catalog = self._classifier._cached_skill_lines
         model = await self._model_router.resolve_model()
 
+        now = self.user_now()
+        date_str = now.strftime("%B %d, %Y")
+
         plan_result = await self._provider.complete(
             model=model,
             messages=[
                 {"role": "system", "content": (
                     "You are a task planner for an AI agent. Break the user's "
                     "goal into concrete steps that the agent's skills can execute.\n\n"
+                    f"Today's date: {date_str}\n\n"
                     f"Available skills:\n{skill_catalog}\n\n"
                     "Output a JSON array of steps. Each step:\n"
                     "{\n"
@@ -1943,7 +1962,11 @@ class Kernel:
                     f"- Maximum {self.MAX_PLAN_STEPS} steps\n"
                     f"- Each step should be a single skill invocation\n"
                     f"- Use depends_on to chain results (e.g. search then save)\n"
-                    f"- Be specific in instructions — the skill needs to know exactly what to do\n\n"
+                    f"- Be specific in instructions — the skill needs to know exactly what to do\n"
+                    f"- Code Runner is ONLY for running actual code (math, data processing, "
+                    f"scripts). Do NOT use it for summarizing, analyzing text, or structuring "
+                    f"information — the Files skill or Search skill can do that directly.\n"
+                    f"- When the user says 'recent', use today's date to determine the time frame\n\n"
                     f"Reply with ONLY a JSON array. No markdown."
                 )},
                 {"role": "user", "content": user_message},
@@ -1981,6 +2004,46 @@ class Kernel:
             f" — {s.get('instruction', '')[:80]}"
             for i, s in enumerate(steps)
         )
+
+        # ── Step 2b: Permission pre-check for ALL skills in the plan ──
+        # Collect unique skills and check permissions upfront so the user
+        # approves once before execution starts (not per-step).
+        seen_skills: set[str] = set()
+        all_request_ids: list[str] = []
+        for s in steps:
+            sid = s.get("skill_id", "")
+            if sid in seen_skills:
+                continue
+            seen_skills.add(sid)
+            manifest = await self._skill_loader.get_manifest(sid)
+            if not manifest:
+                continue
+            for perm in manifest.permissions:
+                check = await self._permissions.check_permission(sid, perm)
+                if not check.allowed and check.requires_user_approval:
+                    risk_tier = await self._permissions.get_risk_tier(perm)
+                    request = await self._permissions.request_permission(
+                        sid, perm, risk_tier,
+                        f"needed for plan step: {sid}",
+                    )
+                    all_request_ids.append(request["request_id"])
+                    yield {
+                        "type": "permission_request",
+                        **request,
+                        "is_first_party": manifest.is_first_party,
+                    }
+
+        if all_request_ids:
+            for rid in all_request_ids:
+                self._pending_permission_tasks[rid] = {
+                    "message": user_message,
+                    "skill_id": steps[0].get("skill_id", ""),
+                    "all_request_ids": all_request_ids,
+                    "intent": intent,
+                    "is_goal": True,
+                    "session_id": session_id,
+                }
+            return
 
         yield {
             "type": "response",
@@ -2221,6 +2284,45 @@ class Kernel:
         # Convert string keys back to int
         results = {int(k): v for k, v in results.items()}
 
+        # Permission pre-check for remaining skills before resuming
+        seen_skills: set[str] = set()
+        resume_request_ids: list[str] = []
+        for s in steps[current_step:]:
+            sid = s.get("skill_id", "")
+            if sid in seen_skills:
+                continue
+            seen_skills.add(sid)
+            manifest = await self._skill_loader.get_manifest(sid)
+            if not manifest:
+                continue
+            for perm in manifest.permissions:
+                check = await self._permissions.check_permission(sid, perm)
+                if not check.allowed and check.requires_user_approval:
+                    risk_tier = await self._permissions.get_risk_tier(perm)
+                    request = await self._permissions.request_permission(
+                        sid, perm, risk_tier,
+                        f"needed for plan step: {sid}",
+                    )
+                    resume_request_ids.append(request["request_id"])
+                    yield {
+                        "type": "permission_request",
+                        **request,
+                        "is_first_party": manifest.is_first_party,
+                    }
+
+        if resume_request_ids:
+            intent = ClassifiedIntent(mode=ExecutionMode.GOAL, task_description=goal)
+            for rid in resume_request_ids:
+                self._pending_permission_tasks[rid] = {
+                    "message": goal,
+                    "skill_id": steps[current_step].get("skill_id", ""),
+                    "all_request_ids": resume_request_ids,
+                    "intent": intent,
+                    "is_goal": True,
+                    "session_id": self._session_id,
+                }
+            return
+
         yield {
             "type": "response",
             "content": f"Resuming plan from step {current_step + 1}/{len(steps)}...",
@@ -2393,17 +2495,16 @@ class Kernel:
             yield {"type": "error", "content": f"Skill '{skill_id}' not found."}
             return
 
-        # Collect granted permissions — skip the per-perm DB query when
-        # we already know they're all granted (e.g. after permission approval).
-        if precomputed_embedding is not None:
-            # Caller already checked permissions; just use the manifest list.
-            granted_perms = list(manifest.permissions)
-        else:
-            granted_perms = []
-            for perm in manifest.permissions:
-                check = await self._permissions.check_permission(skill_id, perm)
-                if check.allowed:
-                    granted_perms.append(perm)
+        # Collect granted permissions from the DB.
+        # Note: permission enforcement (prompting the user for missing
+        # perms) is handled by the CALLER — _handle_delegated,
+        # _handle_multi_delegated, and _handle_goal each do their own
+        # pre-check before invoking this executor.
+        granted_perms = []
+        for perm in manifest.permissions:
+            check = await self._permissions.check_permission(skill_id, perm)
+            if check.allowed:
+                granted_perms.append(perm)
 
         query_embedding = precomputed_embedding or await self._embeddings.embed_async(instruction)
 
@@ -2805,7 +2906,15 @@ class Kernel:
         cached_emb = pending.get("precomputed_embedding")
         cached_sid = pending.get("session_id")
 
-        if pending.get("is_multi_task") and pending.get("intent"):
+        if pending.get("is_goal") and pending.get("intent"):
+            # Goal/plan permission approval — re-run the entire goal handler
+            # which will re-generate or resume the plan with permissions now granted.
+            async for event in self._handle_goal(
+                user_message, pending["intent"],
+                session_id=cached_sid,
+            ):
+                yield event
+        elif pending.get("is_multi_task") and pending.get("intent"):
             async for event in self._handle_multi_delegated(
                 user_message, pending["intent"],
                 session_id=cached_sid,
