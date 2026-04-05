@@ -333,6 +333,14 @@ class Kernel:
         self._session.user_language = val
 
     @property
+    def _session_start(self):
+        return self._session.session_start
+
+    @_session_start.setter
+    def _session_start(self, val):
+        self._session.session_start = val
+
+    @property
     def _mood(self):
         return self._session.mood
 
@@ -649,7 +657,12 @@ class Kernel:
         await self._rebuild_skills_catalog()
 
     async def stop(self) -> None:
-        """Graceful shutdown: flush cache, close connections."""
+        """Graceful shutdown: notify clients, flush cache, close connections."""
+        # Notify connected clients before shutting down
+        await self._emit_event({
+            "type": "error",
+            "content": "Server is shutting down. Reconnect in a moment.",
+        })
         self._running = False
         self._dreaming.stop()
         self._scheduler.stop()

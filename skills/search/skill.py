@@ -330,16 +330,26 @@ async def _search_bing(
 async def _search_duckduckgo(
     ctx, query: str, opts: SearchOpts, api_key: str | None,
 ) -> SearchResult:
-    response = await ctx.http.get(
-        "https://api.duckduckgo.com/",
-        params={"q": query, "format": "json", "no_html": "1", "skip_disambig": "1"},
-        headers={"Accept": "application/json"},
-    )
-
-    if response.status_code != 200:
+    # DDG Instant Answers API sometimes returns 202 (processing).
+    # Retry up to 3 times with a short delay.
+    import asyncio as _aio
+    data = None
+    for _attempt in range(3):
+        response = await ctx.http.get(
+            "https://api.duckduckgo.com/",
+            params={"q": query, "format": "json", "no_html": "1", "skip_disambig": "1"},
+            headers={"Accept": "application/json"},
+        )
+        if response.status_code == 200:
+            data = response.json()
+            break
+        if response.status_code == 202:
+            await _aio.sleep(1)
+            continue
         raise Exception(f"API returned status {response.status_code}")
 
-    data = response.json()
+    if data is None:
+        raise Exception("DuckDuckGo is still processing. Try again in a moment.")
 
     # Build hits from RelatedTopics (DDG doesn't return ranked web results)
     hits = []

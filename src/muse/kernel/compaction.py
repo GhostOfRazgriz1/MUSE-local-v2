@@ -258,6 +258,26 @@ class CompactionManager:
         ):
             asyncio.create_task(self._llm_fold_async())
 
+        # When structural_only is True (local models), the pending fold
+        # list grows unbounded since Tier 3 never fires.  Cap it by
+        # building a simple concatenated summary from the overflow.
+        if self._cfg.structural_only and len(self._pending_fold) > 20:
+            overflow = self._pending_fold[:-10]  # keep last 10
+            self._pending_fold = self._pending_fold[-10:]
+            # Build a crude summary from the overflow
+            parts = [
+                f"{t.get('role', 'assistant')}: {t.get('content', '')[:100]}"
+                for t in overflow
+            ]
+            overflow_text = "\n".join(parts)
+            if self._running_summary:
+                self._running_summary += f"\n\n{overflow_text}"
+            else:
+                self._running_summary = overflow_text
+            # Cap the summary length
+            if len(self._running_summary) > self._cfg.max_summary_words * 6:
+                self._running_summary = self._running_summary[-(self._cfg.max_summary_words * 6):]
+
         # Periodic checkpoint
         if self._turn_counter >= self._cfg.checkpoint_interval:
             asyncio.create_task(self._save_checkpoint_async())
