@@ -18,7 +18,7 @@ MUSE runs on your machine. Your data stays on your device. It learns your prefer
 - **Memory consolidation** -- "dreaming" extracts durable knowledge during idle time
 - **Multi-provider LLM** -- OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, local models, and more
 - **Desktop vision** -- screen capture and automation via local Gemma 4 model
-- **Skill authoring** -- autonomous skill generation with code audit
+- **Extensible via MCP** -- add capabilities through standard MCP servers instead of custom skills
 
 ## Quick Start
 
@@ -66,7 +66,7 @@ muse/
     screen/              # Desktop vision (Gemma 4)
     db/                  # SQLite schema
   sdk/muse_sdk/          # Python SDK for skill development
-  skills/                # Built-in skills (12)
+  skills/                # Built-in skills (11)
   frontend/src/          # React + TypeScript UI (Vite)
   tests/                 # Unit + integration tests
 ```
@@ -85,7 +85,6 @@ muse/
 | **Code Runner** | Execute Python code |
 | **Shell** | Run shell commands |
 | **Webpage Reader** | Fetch and summarize web pages |
-| **Skill Author** | Autonomous skill generation with code audit |
 | **Notify** | Desktop notifications |
 
 ## MCP Servers
