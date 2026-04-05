@@ -432,11 +432,24 @@ async def _op_write(ctx, instruction: str, params: dict) -> dict:
     suggested = params.get("suggested_filename", "")
 
     # If "path" looks like the raw instruction rather than a real file
-    # path (no slashes, no file extension), clear it so we generate a name.
-    # A real path has slashes or a file extension like .py, .txt, .md —
-    # not just a trailing period from a sentence.
-    if path and "/" not in path and "\\" not in path:
-        if not re.search(r"\.\w{1,5}$", path.strip().rstrip(".")):
+    # path, clear it so we fall through to filename generation.
+    # A real filename: "fibonacci.py", "docs/readme.md", "output.txt"
+    # Not a filename: "Write a Python function and save it to fibonacci.py"
+    if path:
+        stripped = path.strip().rstrip(".")
+        has_extension = bool(re.search(r"\.\w{1,5}$", stripped))
+        has_many_spaces = stripped.count(" ") > 3
+        is_sentence = has_many_spaces or len(stripped) > 80
+
+        if is_sentence:
+            # Try to extract a filename from the end of the sentence
+            # e.g. "save it to fibonacci.py" → "fibonacci.py"
+            m = re.search(r"(?:to|as|called|named|into)\s+([\w./-]+\.\w{1,5})\s*$", stripped, re.I)
+            if m:
+                path = m.group(1)
+            else:
+                path = ""
+        elif not has_extension and "/" not in path and "\\" not in path:
             path = ""
 
     # ── Pipeline context: upstream task results (multi-task chain) ──
