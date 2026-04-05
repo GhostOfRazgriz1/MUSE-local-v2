@@ -6061,6 +6061,7 @@ textarea:focus-visible {
   font-family: var(--font-mono);
   padding: 10px 12px;
   outline: none;
+  min-width: 0;
 }
 .setup-key-input::placeholder {
   color: var(--text-muted);
@@ -6071,15 +6072,16 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 38px;
   border: none;
-  border-left: none;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   outline: none;
   box-shadow: none;
+  padding: 0 8px;
+  flex-shrink: 0;
 }
 .setup-key-vis-btn:hover {
   color: var(--text-primary);
