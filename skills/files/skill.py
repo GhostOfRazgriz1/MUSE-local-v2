@@ -112,7 +112,12 @@ async def _ensure_access(ctx, path: str) -> str:
     If not yet approved, prompts the user for consent and persists the grant.
     Returns the resolved absolute path string.
     """
-    resolved = str(Path(path).resolve())
+    # Resolve relative paths against the workspace, not cwd
+    p = Path(path)
+    if not p.is_absolute():
+        workspace = await _get_workspace(ctx)
+        p = Path(workspace) / p
+    resolved = str(p.resolve())
     approved = await _get_approved_dirs(ctx)
 
     for d in approved:
