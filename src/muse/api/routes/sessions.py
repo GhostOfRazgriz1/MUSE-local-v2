@@ -33,6 +33,50 @@ async def create_session(body: dict | None = None):
     return session
 
 
+@router.get("/sessions/search")
+async def search_sessions(q: str = Query(..., min_length=1), limit: int = 20):
+    """Search across all sessions by message content."""
+    orchestrator = get_orchestrator()
+    if not orchestrator:
+        raise HTTPException(503, "Orchestrator not ready")
+
+    db = get_service("db")
+    query = f"%{q}%"
+
+    async with db.execute(
+        """
+        SELECT DISTINCT s.id, s.title, s.created_at, s.updated_at,
+               m.content AS match_content, m.role, m.created_at AS match_at
+        FROM messages m
+        JOIN sessions s ON m.session_id = s.id
+        WHERE m.content LIKE ?
+        ORDER BY m.created_at DESC
+        LIMIT ?
+        """,
+        (query, limit),
+    ) as cursor:
+        rows = await cursor.fetchall()
+
+    sessions: dict[str, dict] = {}
+    for row in rows:
+        sid = row[0]
+        if sid not in sessions:
+            sessions[sid] = {
+                "id": sid,
+                "title": row[1],
+                "created_at": row[2],
+                "updated_at": row[3],
+                "matches": [],
+            }
+        sessions[sid]["matches"].append({
+            "content": row[4][:200],
+            "role": row[5],
+            "created_at": row[6],
+        })
+
+    return {"results": list(sessions.values()), "query": q}
+
+
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str):
     """Get a single session with its messages."""
@@ -84,54 +128,6 @@ async def delete_session(
         get_service("session").session_id = None
         get_service("session").conversation_history = []
     return {"ok": True, "memories_deleted": memories_deleted}
-
-
-@router.get("/sessions/search")
-async def search_sessions(q: str = Query(..., min_length=1), limit: int = 20):
-    """Search across all sessions by message content.
-
-    Returns matching sessions with the relevant message snippets.
-    """
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        raise HTTPException(503, "Orchestrator not ready")
-
-    db = get_service("db")
-    query = f"%{q}%"
-
-    async with db.execute(
-        """
-        SELECT DISTINCT s.id, s.title, s.created_at, s.updated_at,
-               m.content AS match_content, m.role, m.created_at AS match_at
-        FROM messages m
-        JOIN sessions s ON m.session_id = s.id
-        WHERE m.content LIKE ?
-        ORDER BY m.created_at DESC
-        LIMIT ?
-        """,
-        (query, limit),
-    ) as cursor:
-        rows = await cursor.fetchall()
-
-    # Group by session
-    sessions: dict[str, dict] = {}
-    for row in rows:
-        sid = row[0]
-        if sid not in sessions:
-            sessions[sid] = {
-                "id": sid,
-                "title": row[1],
-                "created_at": row[2],
-                "updated_at": row[3],
-                "matches": [],
-            }
-        sessions[sid]["matches"].append({
-            "content": row[4][:200],
-            "role": row[5],
-            "created_at": row[6],
-        })
-
-    return {"results": list(sessions.values()), "query": q}
 
 
 @router.post("/sessions/{session_id}/fork")
