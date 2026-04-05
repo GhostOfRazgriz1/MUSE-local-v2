@@ -61,6 +61,7 @@ export type ChatEvent =
   | { type: "reminder"; content: string; what: string; when: string; key: string }
   | { type: "suggestion"; content: string; suggestion_id: string; skill_id?: string; suggestion_type?: string }
   | { type: "autonomous_action"; skill_id: string; reason: string; result: string }
+  | { type: "greeting_placeholder"; content: string }
   | {
       type: "greeting";
       content: string;

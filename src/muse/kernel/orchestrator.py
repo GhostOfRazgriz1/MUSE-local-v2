@@ -90,6 +90,45 @@ def sanitize_response(text: str) -> str:
     return text.strip()
 
 
+# ---------------------------------------------------------------------------
+# User-friendly error messages — translate developer/exception text into
+# something a human can act on without reading stack traces.
+# ---------------------------------------------------------------------------
+
+_ERROR_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"API returned status 202", re.I),
+     "The search service is busy. Try again in a moment."),
+    (re.compile(r"status 429|rate.?limit|too many requests", re.I),
+     "The AI service is temporarily overloaded. Please wait a moment and try again."),
+    (re.compile(r"status 401|unauthorized|authentication|invalid.*key", re.I),
+     "There's an authentication problem with the AI provider. Check your API key in Settings."),
+    (re.compile(r"status 5\d\d|internal server error|bad gateway|service unavailable", re.I),
+     "The AI service is having issues right now. Try again in a moment."),
+    (re.compile(r"timed?\s*out|timeout|deadline exceeded", re.I),
+     "The request took too long. The model might be overloaded — try again."),
+    (re.compile(r"connection.*(?:refused|reset|closed)|connect.*error|unreachable", re.I),
+     "Couldn't connect to the AI service. Check your network or server status."),
+    (re.compile(r"no models available|model not found|does not exist", re.I),
+     "The selected model isn't available. Check Settings > Models."),
+    (re.compile(r"json.*(?:decode|parse)|unexpected token", re.I),
+     "Got an unexpected response from the AI. Try again."),
+    (re.compile(r"permission denied|not permitted|access denied", re.I),
+     "This action requires a permission that hasn't been granted."),
+]
+
+
+def _friendly_error(raw: str) -> str:
+    """Convert a raw exception message to a user-friendly string."""
+    for pattern, friendly in _ERROR_PATTERNS:
+        if pattern.search(raw):
+            return friendly
+    # Fallback: strip Python exception class prefixes
+    cleaned = re.sub(r"^\w+Error:\s*", "", raw).strip()
+    if len(cleaned) > 150:
+        cleaned = cleaned[:147] + "..."
+    return f"Something went wrong: {cleaned}"
+
+
 _VALID_MOODS = {"curious", "amused", "excited", "concerned", "neutral"}
 _MOOD_TAG_RE = re.compile(r"\[mood:(\w+)\]\s*$")
 
@@ -973,6 +1012,10 @@ class Kernel:
         Otherwise uses the proactivity manager to compose an adaptive
         LLM-generated greeting that incorporates time, context, and
         suggestions naturally.
+
+        Yields a fast static greeting first (``greeting_placeholder``),
+        then the full LLM greeting (``greeting``) so the UI can show
+        something instantly while the LLM works.
         """
         if self._onboarding and self._onboarding.is_active:
             async for event in self._onboarding.start():
@@ -982,7 +1025,15 @@ class Kernel:
         # Reset proactivity session state for the new connection
         self._proactivity.reset_session()
 
-        # Compose adaptive greeting via LLM (returns structured data)
+        # ── Instant static placeholder ────────────────────────
+        agent_name = self._parse_identity_field("name") or "MUSE"
+        static_text = self._parse_identity_field("greeting") or f"Hey! {agent_name} here."
+        yield {
+            "type": "greeting_placeholder",
+            "content": static_text,
+        }
+
+        # ── Full LLM greeting (replaces placeholder) ──────────
         greeting_data = await self._proactivity.compose_greeting()
 
         if greeting_data and greeting_data.get("content"):
@@ -1304,7 +1355,7 @@ class Kernel:
 
         except Exception as e:
             logger.error(f"Error handling message: {e}", exc_info=True)
-            error_content = f"Something went wrong: {str(e)}"
+            error_content = _friendly_error(str(e))
             yield {"type": "error", "content": error_content}
             # Persist so the error survives session switches
             if frozen_session_id:
@@ -2591,8 +2642,9 @@ class Kernel:
                 if self._mood == "working":
                     await self.set_mood("neutral", force=True)
             else:
-                error_msg = completed_task.error if completed_task else "Task failed"
-                _t.task_complete(task.id, skill_id, "failed", error=error_msg)
+                raw_error = completed_task.error if completed_task else "Task failed"
+                error_msg = _friendly_error(raw_error)
+                _t.task_complete(task.id, skill_id, "failed", error=raw_error)
                 yield {
                     "type": "task_failed",
                     "task_id": task.id,
@@ -2622,7 +2674,7 @@ class Kernel:
         except asyncio.TimeoutError:
             _t.task_complete(task.id, skill_id, "timeout")
             await self._task_manager.kill(task.id, "timeout")
-            timeout_msg = f"Task timed out after {manifest.timeout_seconds}s"
+            timeout_msg = "This task took too long. The model might be overloaded — try again."
             yield {
                 "type": "task_failed",
                 "task_id": task.id,
@@ -2641,7 +2693,7 @@ class Kernel:
         except Exception as e:
             _t.error("orchestrator", str(e), task_id=task.id, skill_id=skill_id)
             await self._task_manager.update_status(task.id, "failed", error=str(e))
-            yield {"type": "error", "content": f"Task execution failed: {e}"}
+            yield {"type": "error", "content": _friendly_error(str(e))}
 
     async def _install_authored_skill(self, result_data: dict) -> None:
         """Install a skill generated by the Skill Author skill."""
@@ -2963,7 +3015,7 @@ class Kernel:
                 await self._emit_event({
                     "type": "error",
                     "_session_id": sid,
-                    "content": f"Something went wrong: {str(e)}",
+                    "content": _friendly_error(str(e)),
                 })
             finally:
                 if sid and sid in self._active_bg_sessions:

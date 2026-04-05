@@ -102,21 +102,25 @@ async def chat_websocket(
     # runs in parallel with history loading.  This shaves 100-300ms off
     # T2FM because the greeting is ready (or nearly ready) by the time
     # session bootstrap finishes.
+    #
+    # The generator yields a fast ``greeting_placeholder`` first, then
+    # the full LLM ``greeting``.  We send the placeholder immediately
+    # (progressive enhancement) and queue the rest.
     onboarding_active = (
         orchestrator._onboarding is not None
         and orchestrator._onboarding.is_active
     )
+    greeting_queue: asyncio.Queue = asyncio.Queue()
     greeting_task = None
     if not resumed or onboarding_active:
-        async def _precompute_greeting():
-            events = []
+        async def _stream_greeting():
             try:
                 async for event in orchestrator.get_greeting():
-                    events.append(event)
+                    await greeting_queue.put(event)
             except Exception as e:
                 logger.error(f"Greeting error: {e}")
-            return events
-        greeting_task = asyncio.create_task(_precompute_greeting())
+            await greeting_queue.put(None)  # sentinel
+        greeting_task = asyncio.create_task(_stream_greeting())
 
     if resumed:
         await websocket.send_json({
@@ -166,10 +170,12 @@ async def chat_websocket(
 
     forward_task = asyncio.create_task(forward_events())
 
-    # Send the pre-computed greeting (awaits if still in progress)
+    # Stream greeting events — placeholder arrives fast, full greeting follows.
     if greeting_task is not None:
-        greeting_events = await greeting_task
-        for event in greeting_events:
+        while True:
+            event = await greeting_queue.get()
+            if event is None:
+                break
             await websocket.send_json(event)
 
     # ------------------------------------------------------------------

@@ -248,6 +248,8 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
 }) => {
   const [input, setInput] = useState("");
   const [isThinking, setIsThinking] = useState(false);
+  const [thinkingElapsed, setThinkingElapsed] = useState(0);
+  const thinkingStartRef = useRef<number>(0);
   // Track active skills that haven't completed yet
   const [activeSkills, setActiveSkills] = useState<
     { skill: string; taskId: string }[]
@@ -291,6 +293,21 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
       setIsThinking(true);
     }
   }, [sessionWorking]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Elapsed timer for thinking indicator — starts when thinking begins,
+  // ticks every second, resets when thinking ends.
+  useEffect(() => {
+    if (isThinking) {
+      thinkingStartRef.current = Date.now();
+      setThinkingElapsed(0);
+      const interval = setInterval(() => {
+        setThinkingElapsed(Math.floor((Date.now() - thinkingStartRef.current) / 1000));
+      }, 1000);
+      return () => clearInterval(interval);
+    } else {
+      setThinkingElapsed(0);
+    }
+  }, [isThinking]);
 
   // Process new events into the message list.
   // Side effects (thinking, activeSkills, planActive) are collected first,
@@ -418,9 +435,21 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
           }
         }
 
+        // When the full greeting arrives, replace the placeholder
+        if (evt.type === "greeting") {
+          const placeholderIdx = updated.findIndex(
+            (m) => "type" in m && m.type === "greeting_placeholder"
+          );
+          if (placeholderIdx >= 0) {
+            updated[placeholderIdx] = evt;
+            continue;
+          }
+        }
+
         if (
           evt.type === "response" ||
           evt.type === "greeting" ||
+          evt.type === "greeting_placeholder" ||
           evt.type === "error" ||
           evt.type === "task_started" ||
           evt.type === "task_completed" ||
@@ -737,6 +766,20 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   );
                 }
 
+                case "greeting_placeholder":
+                  return wrapMsg(
+                    <div className="greeting-card greeting-placeholder">
+                      <div className="greeting-card-header">
+                        <div className="msg-avatar agent">
+                          <IconBot size={16} />
+                        </div>
+                        <div className="greeting-card-text">
+                          <MarkdownContent content={evt.content} />
+                        </div>
+                      </div>
+                    </div>
+                  );
+
                 case "greeting": {
                   const gs = evt.suggestions || [];
                   const gr = evt.reminders || [];
@@ -851,40 +894,66 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   );
 
                 case "permission_request": {
-                  const responded = respondedPermissions.has(evt.request_id);
-                  if (responded) {
+                  // ── Batch: group consecutive permission_requests for same skill ──
+                  type PermEvt = typeof evt;
+                  const group: PermEvt[] = [evt];
+                  for (let j = i + 1; j < messages.length; j++) {
+                    const next = messages[j] as ChatEvent;
+                    if (next.type === "permission_request" && next.skill_id === evt.skill_id) {
+                      group.push(next);
+                    } else {
+                      break;
+                    }
+                  }
+                  // If this event is part of a group but not the first, skip it
+                  if (i > 0) {
+                    const prev = messages[i - 1] as ChatEvent;
+                    if (prev.type === "permission_request" && prev.skill_id === evt.skill_id) {
+                      return null; // rendered by the group leader
+                    }
+                  }
+
+                  const allResponded = group.every((e) => respondedPermissions.has(e.request_id));
+                  if (allResponded) {
                     return wrapMsg(
                       <div className="task-notification completed">
                         <IconShield size={13} />
-                        Permission granted — {evt.skill_id}: {evt.permission}
+                        Permissions granted — {evt.skill_id}: {group.map((e) => e.permission).join(", ")}
                       </div>
                     );
                   }
+
+                  const permList = group.map((e) => e.permission).join(", ");
+                  const highestRisk = group.some((e) => e.risk_tier === "critical") ? "critical"
+                    : group.some((e) => e.risk_tier === "high") ? "high"
+                    : group.some((e) => e.risk_tier === "medium") ? "medium" : "low";
+                  const suggestedMode = highestRisk === "critical" || highestRisk === "high" ? "once"
+                    : highestRisk === "medium" ? "session" : "always";
+
                   return wrapMsg(
                     <div className={`permission-card ${evt.is_first_party ? "first-party" : ""}`}>
                       <div className="permission-card-title">
                         <IconShield size={14} />
-                        Permission Request
+                        Permission Request{group.length > 1 ? ` (${group.length})` : ""}
                         {evt.is_first_party && (
                           <span className="permission-recommended-badge">Recommended</span>
                         )}
                       </div>
                       <div className="permission-card-text">
-                        {evt.display_text}
+                        <strong>{evt.skill_id}</strong> wants: {permList}
                       </div>
                       <div className="permission-card-meta">
-                        Skill: {evt.skill_id}
-                        {evt.is_first_party && " (built-in)"}
-                        {" "}&middot; Risk: {evt.risk_tier} &middot; {evt.permission}
+                        {evt.is_first_party && "Built-in skill"}
+                        {evt.is_first_party && " · "}Risk: {highestRisk}
                       </div>
                       <PermissionActions
-                        suggestedMode={evt.suggested_mode ?? "once"}
-                        onAllow={(mode) =>
-                          handlePermission(evt.request_id, true, mode)
-                        }
-                        onDeny={() =>
-                          handlePermission(evt.request_id, false)
-                        }
+                        suggestedMode={(suggestedMode as ApprovalMode) ?? "once"}
+                        onAllow={(mode) => {
+                          for (const e of group) handlePermission(e.request_id, true, mode);
+                        }}
+                        onDeny={() => {
+                          handlePermission(group[0].request_id, false);
+                        }}
                       />
                     </div>
                   );
@@ -1118,6 +1187,9 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                       : sessionWorking
                         ? "Working..."
                         : "Thinking"}
+                    {thinkingElapsed >= 3 && (
+                      <span className="activity-elapsed">{thinkingElapsed}s</span>
+                    )}
                   </div>
                   <div className="activity-dots">
                     <div className="thinking-dot" />

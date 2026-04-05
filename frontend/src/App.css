@@ -2027,6 +2027,16 @@ textarea:focus-visible {
   font-size: var(--fs-sm);
   color: var(--text-muted);
   animation: activity-pulse 2s ease-in-out infinite;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.activity-elapsed {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
 }
 
 @keyframes activity-pulse {
@@ -6126,6 +6136,10 @@ textarea:focus-visible {
   border-radius: var(--radius-lg);
   animation: msg-in 0.4s var(--ease-out);
   max-width: 600px;
+}
+.greeting-card.greeting-placeholder {
+  opacity: 0.7;
+  border-style: dashed;
 }
 .greeting-card-header {
   display: flex;
