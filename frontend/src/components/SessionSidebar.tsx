@@ -48,6 +48,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [expandedBranchSession, setExpandedBranchSession] = useState<string | null>(null);
   const [branches, setBranches] = useState<BranchTip[]>([]);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -134,8 +135,42 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
             className="sidebar-search-input"
             placeholder="Search sessions..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              // Deep search via API when query is 3+ chars
+              const q = e.target.value.trim();
+              if (q.length >= 3) {
+                apiFetch(`/api/sessions/search?q=${encodeURIComponent(q)}&limit=10`)
+                  .then((r) => r.json())
+                  .then((d) => setSearchResults(d.results || []))
+                  .catch(() => setSearchResults([]));
+              } else {
+                setSearchResults([]);
+              }
+            }}
           />
+        </div>
+      )}
+
+      {/* Deep search results */}
+      {searchResults.length > 0 && search.trim().length >= 3 && (
+        <div className="sidebar-search-results">
+          <div className="sidebar-search-results-label">Found in messages:</div>
+          {searchResults.map((r: any) => (
+            <div
+              key={r.id}
+              className={`session-item ${activeSessionId === r.id ? "active" : ""}`}
+              onClick={() => { onSelectSession(r.id); setSearch(""); setSearchResults([]); }}
+            >
+              <span className="session-item-icon"><IconMessageSquare size={15} /></span>
+              <div className="session-item-content">
+                <div className="session-item-title">{r.title || "Untitled"}</div>
+                <div className="session-item-date" style={{ fontSize: "11px", opacity: 0.7 }}>
+                  ...{r.matches?.[0]?.content?.slice(0, 80)}...
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
