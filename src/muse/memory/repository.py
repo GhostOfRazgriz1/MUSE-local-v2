@@ -200,6 +200,7 @@ class MemoryRepository:
             + " FROM memory_entries"
             + " WHERE namespace = ? AND superseded_by IS NULL"
             + " AND embedding IS NOT NULL"
+            + " LIMIT 1000"
         )
         params: tuple = (namespace,)
 
@@ -253,6 +254,7 @@ class MemoryRepository:
         value_type: str = "text",
         source_task_id: str = None,
         precomputed_embedding: list[float] | None = None,
+        _commit: bool = True,
     ) -> dict:
         """Insert or update (upsert) a memory entry.
 
@@ -263,6 +265,9 @@ class MemoryRepository:
 
         Uses a single INSERT ... ON CONFLICT ... DO UPDATE statement
         to avoid extra round-trips.
+
+        Set *_commit* to False to skip the auto-commit (caller is
+        responsible for committing the transaction).
         """
         now = _now_iso()
 
@@ -291,7 +296,8 @@ class MemoryRepository:
             now, now, now,
             source_task_id,
         ))
-        await self._db.commit()
+        if _commit:
+            await self._db.commit()
         return await self.get(namespace, key)  # type: ignore[return-value]
 
     async def delete(self, namespace: str, key: str) -> None:

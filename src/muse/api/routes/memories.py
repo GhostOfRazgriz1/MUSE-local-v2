@@ -100,10 +100,12 @@ async def memory_stats(orchestrator=Depends(require_orchestrator)):
     repo = get_service("memory_repo")
     total = await repo.count_entries()
 
-    # Count per consumer-visible namespace.
+    # Count per consumer-visible namespace (parallel).
+    import asyncio
+    ns_list = list(_CONSUMER_NS.keys())
+    key_lists = await asyncio.gather(*[repo.list_keys(ns) for ns in ns_list])
     ns_counts: dict[str, int] = {}
-    for ns in list(_CONSUMER_NS.keys()):
-        keys = await repo.list_keys(ns)
+    for ns, keys in zip(ns_list, key_lists):
         if keys:
             ns_counts[_friendly_ns(ns)] = len(keys)
 

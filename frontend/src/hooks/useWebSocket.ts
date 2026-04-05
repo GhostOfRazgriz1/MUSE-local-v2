@@ -46,7 +46,6 @@ export interface UseWebSocketReturn {
 export function useWebSocket(requestedSessionId: string | null, reconnectToken?: number, paused?: boolean): UseWebSocketReturn {
   const [connected, setConnected] = useState(false);
   const [events, setEvents] = useState<ChatEvent[]>([]);
-  const [lastEvent, setLastEvent] = useState<ChatEvent | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [historyMessages, setHistoryMessages] = useState<DisplayMessage[]>([]);
 
@@ -185,24 +184,12 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
             setPendingInteractions(next);
           }
 
-          if (parsed.type === "session_updated") {
-            setEvents((prev) => {
-              const next = [...prev, parsed];
-              return next.length > MAX_EVENTS
-                ? structuralCompactEvents(next, pendingRef.current)
-                : next;
-            });
-            setLastEvent(parsed);
-            return;
-          }
-
           setEvents((prev) => {
             const next = [...prev, parsed];
             return next.length > MAX_EVENTS
               ? structuralCompactEvents(next, pendingRef.current)
               : next;
           });
-          setLastEvent(parsed);
         } catch {
           // Ignore malformed messages
         }
@@ -257,7 +244,6 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
 
     // Reset UI state
     setEvents([]);
-    setLastEvent(null);
     setSessionId(null);
     setHistoryMessages([]);
     // Close existing connection and reconnect
@@ -279,6 +265,8 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
       }
     };
   }, [requestedSessionId, reconnectToken, paused, connect]);
+
+  const lastEvent = events.length > 0 ? events[events.length - 1] : null;
 
   return { sendMessage, sendRaw, lastEvent, connected, events, sessionId, historyMessages, pendingInteractions, backgroundNotifications, clearBackgroundNotification };
 }

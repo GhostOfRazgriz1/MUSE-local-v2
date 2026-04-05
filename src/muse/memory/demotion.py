@@ -219,12 +219,14 @@ class DemotionManager:
         """Write all dirty cache entries to persistent storage.
 
         Passes the pre-computed embedding from the cache entry to avoid
-        redundant re-embedding on each put().
+        redundant re-embedding on each put().  All writes are batched in
+        a single transaction (one commit) instead of committing per row.
 
         Returns the number of entries flushed.
         """
         dirty = self._cache.get_dirty_entries()
-        count = 0
+        if not dirty:
+            return 0
 
         for entry in dirty:
             namespace = entry.get("namespace", "default")
@@ -240,11 +242,13 @@ class DemotionManager:
                 value_type=value_type,
                 source_task_id=source_task_id,
                 precomputed_embedding=entry.get("embedding"),
+                _commit=False,
             )
             self._cache.mark_clean(namespace, key)
-            count += 1
 
-        return count
+        # Single commit for the entire batch
+        await self._repo._db.commit()
+        return len(dirty)
 
     # ------------------------------------------------------------------
     # High-level: absorb a task result

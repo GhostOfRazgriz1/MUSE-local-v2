@@ -265,6 +265,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const processedCountRef = useRef(0);
+  const rafRef = useRef<number>(0);
   // Unique ID per user message — distinguishes intentional repeats from dupes
   const msgIdRef = useRef(0);
   // Steering: active plan detection + steering input
@@ -312,7 +313,19 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
   // Process new events into the message list.
   // Side effects (thinking, activeSkills, planActive) are collected first,
   // then applied in a single batch to avoid extra renders.
+  // Wrapped in requestAnimationFrame to coalesce rapid WebSocket events
+  // (especially response_chunk during streaming) to one update per frame.
   useEffect(() => {
+    if (events.length <= processedCountRef.current) return;
+
+    // Cancel any pending frame — the next frame will process all accumulated events.
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(processEvents);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [events, setMessages]);
+
+  const processEvents = useCallback(() => {
+    rafRef.current = 0;
     if (events.length <= processedCountRef.current) return;
 
     const newEvents = events.slice(processedCountRef.current);

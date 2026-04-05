@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import ReactDOM from "react-dom";
 import { IconMessageSquare, IconPlus, IconTrash, IconGitBranch } from "./Icons";
 import { apiFetch } from "../hooks/useApiToken";
@@ -49,6 +49,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   const [expandedBranchSession, setExpandedBranchSession] = useState<string | null>(null);
   const [branches, setBranches] = useState<BranchTip[]>([]);
   const [searchResults, setSearchResults] = useState<any[]>([]);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -137,13 +138,16 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
-              // Deep search via API when query is 3+ chars
+              // Debounced deep search via API when query is 3+ chars
+              if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
               const q = e.target.value.trim();
               if (q.length >= 3) {
-                apiFetch(`/api/sessions/search?q=${encodeURIComponent(q)}&limit=10`)
-                  .then((r) => r.json())
-                  .then((d) => setSearchResults(d.results || []))
-                  .catch(() => setSearchResults([]));
+                searchTimerRef.current = setTimeout(() => {
+                  apiFetch(`/api/sessions/search?q=${encodeURIComponent(q)}&limit=10`)
+                    .then((r) => r.json())
+                    .then((d) => setSearchResults(d.results || []))
+                    .catch(() => setSearchResults([]));
+                }, 300);
               } else {
                 setSearchResults([]);
               }
