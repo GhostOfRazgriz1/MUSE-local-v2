@@ -6074,9 +6074,12 @@ textarea:focus-visible {
   width: 36px;
   height: 36px;
   border: none;
+  border-left: none;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
+  outline: none;
+  box-shadow: none;
 }
 .setup-key-vis-btn:hover {
   color: var(--text-primary);
