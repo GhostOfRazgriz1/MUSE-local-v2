@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from muse.api.app import get_orchestrator, get_service
+from muse.api.app import get_service, require_orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -14,11 +14,8 @@ router = APIRouter(prefix="/skills", tags=["skills"])
 
 
 @router.get("")
-async def list_skills():
+async def list_skills(orchestrator=Depends(require_orchestrator)):
     """List installed skills with full manifest details and permission status."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"skills": []}
 
     installed = await get_service("skill_loader").get_installed()
 
@@ -62,11 +59,8 @@ async def list_skills():
 
 
 @router.get("/{skill_id}")
-async def get_skill(skill_id: str):
+async def get_skill(skill_id: str, orchestrator=Depends(require_orchestrator)):
     """Get details of an installed skill."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     manifest = await get_service("skill_loader").get_manifest(skill_id)
     if not manifest:
         return {"error": "Skill not found"}
@@ -74,11 +68,8 @@ async def get_skill(skill_id: str):
 
 
 @router.get("/{skill_id}/settings")
-async def get_skill_settings(skill_id: str):
+async def get_skill_settings(skill_id: str, orchestrator=Depends(require_orchestrator)):
     """Get a skill's credential specs and their configured status."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
 
     manifest = await get_service("skill_loader").get_manifest(skill_id)
     if not manifest:
@@ -103,11 +94,8 @@ async def get_skill_settings(skill_id: str):
 
 
 @router.post("/{skill_id}/credentials")
-async def store_skill_credential(skill_id: str, body: dict):
+async def store_skill_credential(skill_id: str, body: dict, orchestrator=Depends(require_orchestrator)):
     """Store a credential for a skill (via the vault)."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
 
     manifest = await get_service("skill_loader").get_manifest(skill_id)
     if not manifest:
@@ -133,21 +121,15 @@ async def store_skill_credential(skill_id: str, body: dict):
 
 
 @router.delete("/{skill_id}/credentials/{credential_id}")
-async def delete_skill_credential(skill_id: str, credential_id: str):
+async def delete_skill_credential(skill_id: str, credential_id: str, orchestrator=Depends(require_orchestrator)):
     """Delete a credential for a skill."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     await get_service("vault").delete(credential_id)
     return {"status": "deleted", "id": credential_id}
 
 
 @router.delete("/{skill_id}")
-async def uninstall_skill(skill_id: str):
+async def uninstall_skill(skill_id: str, orchestrator=Depends(require_orchestrator)):
     """Uninstall a skill."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     await get_service("skill_loader").uninstall(skill_id)
     await get_service("permissions").permission_repo.revoke_all_for_skill(skill_id)
     await orchestrator._rebuild_skills_catalog()
@@ -159,11 +141,8 @@ async def uninstall_skill(skill_id: str):
 # ------------------------------------------------------------------
 
 @router.get("/defaults")
-async def get_skill_defaults():
+async def get_skill_defaults(orchestrator=Depends(require_orchestrator)):
     """Return the user's preferred skill for each category."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"defaults": {}}
 
     # Collect all categories from installed skills
     installed = await get_service("skill_loader").get_installed()
@@ -195,12 +174,9 @@ async def get_skill_defaults():
 
 
 @router.put("/defaults/{category}")
-async def set_skill_default(category: str, body: dict):
+async def set_skill_default(category: str, body: dict, orchestrator=Depends(require_orchestrator)):
     """Set the preferred skill for a category."""
     from datetime import datetime, timezone
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
 
     skill_id = body.get("skill_id", "").strip()
     key = f"skill_default.{category}"

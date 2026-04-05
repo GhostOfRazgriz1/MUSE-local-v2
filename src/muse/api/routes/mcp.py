@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from muse.api.app import get_orchestrator, get_service
+from muse.api.app import get_service, require_orchestrator
 from muse.mcp.config import MCPServerConfig
 
 logger = logging.getLogger(__name__)
@@ -14,9 +14,7 @@ router = APIRouter(prefix="/mcp", tags=["mcp"])
 
 
 def _get_manager():
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        raise HTTPException(503, "Orchestrator not ready")
+    orchestrator = require_orchestrator()
     if not get_service("mcp_manager"):
         raise HTTPException(503, "MCP support not available")
     return get_service("mcp_manager"), orchestrator

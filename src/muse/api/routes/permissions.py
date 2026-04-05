@@ -4,59 +4,44 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from muse.api.app import get_orchestrator, get_service
+from muse.api.app import get_service, require_orchestrator
 
 router = APIRouter(prefix="/permissions", tags=["permissions"])
 
 
 @router.get("")
-async def list_permissions():
+async def list_permissions(orchestrator=Depends(require_orchestrator)):
     """List all active permission grants."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"grants": []}
     grants = await get_service("permissions").permission_repo.get_all_grants()
     return {"grants": grants}
 
 
 # Fixed routes MUST come before parameterized /{skill_id}
 @router.get("/pending")
-async def pending_requests():
+async def pending_requests(orchestrator=Depends(require_orchestrator)):
     """Get pending permission requests."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"requests": []}
     return {"requests": await get_service("permissions").get_pending_requests()}
 
 
 @router.get("/audit")
-async def audit_log(limit: int = 50):
+async def audit_log(limit: int = 50, orchestrator=Depends(require_orchestrator)):
     """Get the audit log."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"entries": []}
     entries = await get_service("audit").get_recent(limit)
     return {"entries": entries}
 
 
 @router.get("/budgets")
-async def trust_budgets():
+async def trust_budgets(orchestrator=Depends(require_orchestrator)):
     """Get all trust budgets."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"budgets": []}
     budgets = await get_service("trust_budget").get_all_budgets()
     return {"budgets": budgets}
 
 
 @router.post("/budgets")
-async def set_budget(body: dict):
+async def set_budget(body: dict, orchestrator=Depends(require_orchestrator)):
     """Set or update a trust budget."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     await get_service("trust_budget").set_budget(
         permission=body["permission"],
         max_actions=body.get("max_actions"),
@@ -67,11 +52,8 @@ async def set_budget(body: dict):
 
 
 @router.post("/approve/{request_id}")
-async def approve(request_id: str, body: dict | None = None):
+async def approve(request_id: str, body: dict | None = None, orchestrator=Depends(require_orchestrator)):
     """Approve a pending permission request."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     mode = (body or {}).get("approval_mode", "once")
     events = []
     async for event in orchestrator.approve_permission(request_id, mode):
@@ -80,11 +62,8 @@ async def approve(request_id: str, body: dict | None = None):
 
 
 @router.post("/deny/{request_id}")
-async def deny(request_id: str):
+async def deny(request_id: str, orchestrator=Depends(require_orchestrator)):
     """Deny a pending permission request."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     events = []
     async for event in orchestrator.deny_permission(request_id):
         events.append(event)
@@ -94,11 +73,8 @@ async def deny(request_id: str):
 # ── Directory access (Files skill) ─────────────────────────────────
 
 @router.get("/directories")
-async def list_approved_directories():
+async def list_approved_directories(orchestrator=Depends(require_orchestrator)):
     """List directories the Files skill has access to."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"directories": []}
     entry = await get_service("memory_repo").get("Files", "config.approved_directories")
     if entry and entry.get("value"):
         try:
@@ -110,11 +86,8 @@ async def list_approved_directories():
 
 
 @router.delete("/directories")
-async def revoke_directory(body: dict):
+async def revoke_directory(body: dict, orchestrator=Depends(require_orchestrator)):
     """Revoke access to a specific directory."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     path = body.get("path", "")
     entry = await get_service("memory_repo").get("Files", "config.approved_directories")
     if entry and entry.get("value"):
@@ -133,30 +106,21 @@ async def revoke_directory(body: dict):
 
 # Parameterized routes LAST
 @router.get("/{skill_id}")
-async def skill_permissions(skill_id: str):
+async def skill_permissions(skill_id: str, orchestrator=Depends(require_orchestrator)):
     """Get permissions for a specific skill."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"grants": []}
     grants = await get_service("permissions").permission_repo.get_active_grants(skill_id)
     return {"grants": grants}
 
 
 @router.post("/{skill_id}/{permission}/revoke")
-async def revoke_permission(skill_id: str, permission: str):
+async def revoke_permission(skill_id: str, permission: str, orchestrator=Depends(require_orchestrator)):
     """Revoke a specific permission for a skill (POST)."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     await get_service("permissions").permission_repo.revoke(skill_id, permission)
     return {"status": "revoked", "skill_id": skill_id, "permission": permission}
 
 
 @router.delete("/{skill_id}/{permission}")
-async def revoke_permission_delete(skill_id: str, permission: str):
+async def revoke_permission_delete(skill_id: str, permission: str, orchestrator=Depends(require_orchestrator)):
     """Revoke a specific permission for a skill (DELETE)."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     await get_service("permissions").permission_repo.revoke(skill_id, permission)
     return {"status": "revoked", "skill_id": skill_id, "permission": permission}

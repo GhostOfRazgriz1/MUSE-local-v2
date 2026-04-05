@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from muse.api.app import get_orchestrator
+from muse.api.app import require_orchestrator
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
 @router.get("")
-async def list_active_tasks():
+async def list_active_tasks(orchestrator=Depends(require_orchestrator)):
     """Get all currently active tasks."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"tasks": []}
 
     tasks = orchestrator.get_active_tasks()
     return {
@@ -35,30 +32,21 @@ async def list_active_tasks():
 
 
 @router.get("/history")
-async def task_history(limit: int = 50):
+async def task_history(limit: int = 50, orchestrator=Depends(require_orchestrator)):
     """Get completed task history."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"tasks": []}
     return {"tasks": await orchestrator.get_task_history(limit)}
 
 
 @router.post("/{task_id}/kill")
-async def kill_task(task_id: str):
+async def kill_task(task_id: str, orchestrator=Depends(require_orchestrator)):
     """Kill a running task."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     await orchestrator.kill_task(task_id)
     return {"status": "killed", "task_id": task_id}
 
 
 @router.get("/usage")
-async def session_usage():
+async def session_usage(orchestrator=Depends(require_orchestrator)):
     """Get token usage data for the current session."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"tokens_in": 0, "tokens_out": 0, "task_count": 0}
     task_usage = await orchestrator.get_session_usage()
     return {**task_usage, "llm": orchestrator.llm_usage}
 
@@ -66,20 +54,14 @@ async def session_usage():
 # ── Scheduled tasks ────────────────────────────────────────────────
 
 @router.get("/scheduled")
-async def list_scheduled():
+async def list_scheduled(orchestrator=Depends(require_orchestrator)):
     """List all scheduled background tasks."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"tasks": []}
     return {"tasks": await orchestrator.scheduler.list_tasks()}
 
 
 @router.post("/scheduled")
-async def create_scheduled(body: dict):
+async def create_scheduled(body: dict, orchestrator=Depends(require_orchestrator)):
     """Create a new scheduled background task."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     task = await orchestrator.scheduler.create(
         skill_id=body["skill_id"],
         instruction=body["instruction"],
@@ -89,20 +71,14 @@ async def create_scheduled(body: dict):
 
 
 @router.delete("/scheduled/{task_id}")
-async def delete_scheduled(task_id: str):
+async def delete_scheduled(task_id: str, orchestrator=Depends(require_orchestrator)):
     """Delete a scheduled task."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     deleted = await orchestrator.scheduler.delete(task_id)
     return {"deleted": deleted}
 
 
 @router.post("/scheduled/{task_id}/toggle")
-async def toggle_scheduled(task_id: str, body: dict):
+async def toggle_scheduled(task_id: str, body: dict, orchestrator=Depends(require_orchestrator)):
     """Enable or disable a scheduled task."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"error": "Not ready"}
     updated = await orchestrator.scheduler.toggle(task_id, body.get("enabled", True))
     return {"updated": updated}

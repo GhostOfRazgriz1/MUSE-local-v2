@@ -35,6 +35,14 @@ def get_service(name: str):
     return orch.registry.get(name)
 
 
+def require_orchestrator():
+    """FastAPI dependency — returns the orchestrator or raises 503."""
+    orch = _orchestrator
+    if orch is None:
+        raise HTTPException(503, "Orchestrator not ready")
+    return orch
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle — start and stop the orchestrator."""

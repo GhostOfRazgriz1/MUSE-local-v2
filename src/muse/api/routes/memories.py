@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from muse.api.app import get_orchestrator, get_service
+from muse.api.app import get_service, require_orchestrator
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["memories"])
@@ -68,11 +68,9 @@ def _entry_to_item(entry: dict) -> dict:
 async def list_memories(
     namespace: str | None = Query(None, description="Filter by namespace"),
     limit: int = Query(200, ge=1, le=500),
+    orchestrator=Depends(require_orchestrator),
 ):
     """Return consumer-visible memories, optionally filtered by namespace."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        raise HTTPException(503, "Orchestrator not ready")
 
     repo = get_service("memory_repo")
     if namespace:
@@ -96,11 +94,8 @@ async def list_memories(
 
 
 @router.get("/memories/stats")
-async def memory_stats():
+async def memory_stats(orchestrator=Depends(require_orchestrator)):
     """Return aggregate memory statistics and relationship progression."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        raise HTTPException(503, "Orchestrator not ready")
 
     repo = get_service("memory_repo")
     total = await repo.count_entries()
@@ -130,16 +125,13 @@ async def memory_stats():
 
 
 @router.post("/memories")
-async def add_memory(body: dict):
+async def add_memory(body: dict, orchestrator=Depends(require_orchestrator)):
     """Manually add a memory entry.
 
     Body: ``{"value": "I like sushi", "namespace": "_profile"}``
     The namespace defaults to ``_profile`` if omitted.
     A key is auto-generated from the value text.
     """
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        raise HTTPException(503, "Orchestrator not ready")
 
     value = (body.get("value") or "").strip()
     if not value:
@@ -161,11 +153,8 @@ _DELETABLE_NS = {"_profile", "_facts", "_project", "_conversation", "_emotions"}
 
 
 @router.delete("/memories/{namespace}/{key:path}")
-async def delete_memory(namespace: str, key: str):
+async def delete_memory(namespace: str, key: str, orchestrator=Depends(require_orchestrator)):
     """Delete a single memory entry (consumer namespaces only)."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        raise HTTPException(503, "Orchestrator not ready")
 
     if namespace not in _DELETABLE_NS:
         raise HTTPException(403, "Cannot delete from this namespace")

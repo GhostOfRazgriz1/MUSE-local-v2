@@ -5,10 +5,10 @@ from __future__ import annotations
 import html
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from muse.api.app import get_orchestrator, get_service
+from muse.api.app import get_service, require_orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
 @router.get("/start")
-async def start_flow(provider: str, scopes: str | None = None):
+async def start_flow(provider: str, scopes: str | None = None, orchestrator=Depends(require_orchestrator)):
     """Begin an OAuth authorization code flow.
 
     Query params:
@@ -27,9 +27,6 @@ async def start_flow(provider: str, scopes: str | None = None):
     The client_id is loaded from user_settings (oauth.{provider}.client_id).
     On success, redirects the browser to the provider's authorization page.
     """
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return HTMLResponse("<h2>MUSE is not running.</h2>", status_code=503)
 
     # Load client_id from user_settings
     db = get_service("db")
@@ -79,7 +76,7 @@ async def start_flow(provider: str, scopes: str | None = None):
 
 
 @router.get("/callback")
-async def oauth_callback(code: str, state: str, request: Request):
+async def oauth_callback(code: str, state: str, request: Request, orchestrator=Depends(require_orchestrator)):
     """Handle the OAuth redirect from the provider.
 
     The provider redirects the user's browser here with ``code`` and
@@ -89,11 +86,6 @@ async def oauth_callback(code: str, state: str, request: Request):
     The ``client_secret`` is loaded from user settings internally by
     the OAuthManager — it is never accepted from the client.
     """
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return HTMLResponse(
-            "<h2>MUSE is not running.</h2>", status_code=503,
-        )
 
     try:
         credential_id = await get_service("oauth_manager").complete_flow(
@@ -122,10 +114,7 @@ async def oauth_callback(code: str, state: str, request: Request):
 
 
 @router.get("/status/{provider}")
-async def oauth_status(provider: str):
+async def oauth_status(provider: str, orchestrator=Depends(require_orchestrator)):
     """Check whether OAuth is configured for *provider*."""
-    orchestrator = get_orchestrator()
-    if not orchestrator:
-        return {"configured": False}
 
     return await get_service("oauth_manager").get_status(provider)
