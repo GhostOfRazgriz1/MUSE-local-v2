@@ -771,8 +771,24 @@ class ProactivityManager:
         # Pattern summary
         pattern_summary = self._registry.get("patterns").summarize_recent()
 
-        # Build prompt context
-        reminder_parts = [f"Reminder: {r['what']} ({r['when']})" for r in reminders if r["what"]]
+        # Build prompt context — convert reminder times to relative
+        def _relative_when(w: str) -> str:
+            try:
+                dt = datetime.fromisoformat(w)
+                diff = dt - datetime.now(timezone.utc)
+                mins = int(diff.total_seconds() / 60)
+                if mins < 0:
+                    return "overdue"
+                if mins < 60:
+                    return f"in {mins} min"
+                hours = int(mins / 60)
+                if hours < 24:
+                    return f"in {hours}h"
+                return dt.strftime("%b %d %I:%M %p")
+            except (ValueError, TypeError):
+                return w
+
+        reminder_parts = [f"Reminder: {r['what']} ({_relative_when(r['when'])})" for r in reminders if r["what"]]
         suggestion_parts = [s["content"] for s in suggestions]
 
         context_parts = []
