@@ -565,6 +565,13 @@ async def _op_write(ctx, instruction: str, params: dict) -> dict:
     resolved = await _ensure_access(ctx, path)
     p = Path(resolved)
 
+    # Flatten LLM-hallucinated subdirectories: if the resolved path creates
+    # a new subdirectory that doesn't already exist, collapse to just the
+    # filename inside the workspace.  Prevents random dirs like "lyrics_files/".
+    workspace = await _get_workspace(ctx)
+    if not p.parent.exists() and str(p.parent) != workspace:
+        p = Path(workspace) / p.name
+
     existed = p.exists()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")

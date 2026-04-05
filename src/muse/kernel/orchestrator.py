@@ -1828,31 +1828,37 @@ class Kernel:
                         continue
                     yield event
             else:
-                # Multiple parallel tasks — merge via queue
+                # Multiple parallel tasks — merge via queue.
+                # Use a semaphore to respect max_concurrent_tasks so that
+                # waves larger than the limit throttle instead of failing.
                 event_queue: asyncio.Queue = asyncio.Queue()
                 _sentinel = object()
+                _wave_sem = asyncio.Semaphore(
+                    self._registry.get("task_manager")._max_concurrent
+                )
 
                 async def _run_sub(sub_idx: int, sub_task: SubTask, pipe: dict):
-                    try:
-                        async for evt in self._execute_sub_task(
-                            skill_id=sub_task.skill_id,
-                            instruction=sub_task.instruction,
-                            intent=intent,
-                            action=sub_task.action,
-                            pipeline_context=pipe,
-                            record_history=False,
-                            session_id=session_id,
-                        ):
-                            evt["sub_task_index"] = sub_idx
-                            await event_queue.put((sub_idx, evt))
-                    except Exception as e:
-                        await event_queue.put((sub_idx, {
-                            "type": "error",
-                            "content": f"Sub-task {sub_idx} failed: {e}",
-                            "sub_task_index": sub_idx,
-                        }))
-                    finally:
-                        await event_queue.put(_sentinel)
+                    async with _wave_sem:
+                        try:
+                            async for evt in self._execute_sub_task(
+                                skill_id=sub_task.skill_id,
+                                instruction=sub_task.instruction,
+                                intent=intent,
+                                action=sub_task.action,
+                                pipeline_context=pipe,
+                                record_history=False,
+                                session_id=session_id,
+                            ):
+                                evt["sub_task_index"] = sub_idx
+                                await event_queue.put((sub_idx, evt))
+                        except Exception as e:
+                            await event_queue.put((sub_idx, {
+                                "type": "error",
+                                "content": f"Sub-task {sub_idx} failed: {e}",
+                                "sub_task_index": sub_idx,
+                            }))
+                        finally:
+                            await event_queue.put(_sentinel)
 
                 running = [
                     asyncio.create_task(_run_sub(idx, st, pipe))
