@@ -41,6 +41,7 @@ async def chat_websocket(
     session_id: str | None = Query(None),
     token: str | None = Query(None),
     tz: str | None = Query(None),
+    locale: str | None = Query(None),
 ):
     """WebSocket endpoint for the chat stream.
 
@@ -79,6 +80,15 @@ async def chat_websocket(
     # Store the user's timezone for time-aware features
     if tz:
         get_service("session").user_tz = tz
+
+    # Map browser locale to LLM language name and store it.
+    # Only overrides if no language was explicitly set in Settings.
+    if locale and not get_service("session").user_language:
+        _LOCALE_MAP = {"zh": "Chinese (Simplified)", "zh-CN": "Chinese (Simplified)",
+                       "zh-TW": "Chinese (Traditional)"}
+        lang = _LOCALE_MAP.get(locale, "")
+        if lang:
+            get_service("session").user_language = lang
 
     # ------------------------------------------------------------------
     # Session bootstrap

@@ -95,6 +95,11 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
       try {
         params.set("tz", Intl.DateTimeFormat().resolvedOptions().timeZone);
       } catch { /* Intl not available — server falls back to UTC */ }
+      // Send locale for i18n — backend maps to LLM language directive
+      try {
+        const locale = localStorage.getItem("muse_locale") || navigator.language || "en";
+        params.set("locale", locale);
+      } catch {}
       const qs = params.toString();
       const url = qs ? `${WS_BASE}?${qs}` : WS_BASE;
       const ws = new WebSocket(url);

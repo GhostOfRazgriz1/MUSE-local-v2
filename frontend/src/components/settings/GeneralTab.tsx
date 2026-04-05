@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { IconCheck, IconCpu } from "../Icons";
 import { apiFetch } from "../../hooks/useApiToken";
 import { SettingsSection, SettingsLoader } from "./shared";
+import { useLocale, LANGUAGES } from "../../i18n";
 
 /* ─── General Tab ─── */
 
@@ -138,6 +139,7 @@ export function applyPalette(preset: PalettePreset) {
 }
 
 export default function GeneralTab() {
+  const { locale, setLocale, t } = useLocale();
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
@@ -323,46 +325,21 @@ export default function GeneralTab() {
       </SettingsSection>
 
       {/* Language */}
-      <SettingsSection title="Language" description="The language your agent responds in.">
+      <SettingsSection title={t("settings_language")} description={t("settings_language_desc")}>
         <div className="settings-field">
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input
-              className="settings-input"
-              style={{ flex: 1 }}
-              value={settings["language"] ?? ""}
-              placeholder="English (default)"
-              onChange={(e) =>
-                setSettings((prev) => ({ ...prev, language: e.target.value }))
-              }
-              onBlur={(e) => saveSetting("language", e.target.value)}
-              list="language-suggestions"
-            />
-            <datalist id="language-suggestions">
-              <option value="English" />
-              <option value="Spanish" />
-              <option value="French" />
-              <option value="German" />
-              <option value="Japanese" />
-              <option value="Korean" />
-              <option value="Chinese (Simplified)" />
-              <option value="Chinese (Traditional)" />
-              <option value="Portuguese" />
-              <option value="Arabic" />
-              <option value="Hindi" />
-              <option value="Russian" />
-              <option value="Italian" />
-              <option value="Dutch" />
-              <option value="Thai" />
-              <option value="Vietnamese" />
-              <option value="Indonesian" />
-              <option value="Turkish" />
-            </datalist>
-            {saving === "language" && (
-              <span className="settings-saving">Saving...</span>
-            )}
+            <select
+              className="settings-select"
+              value={locale}
+              onChange={(e) => setLocale(e.target.value)}
+            >
+              {LANGUAGES.map((l) => (
+                <option key={l.code} value={l.code}>{l.label}</option>
+              ))}
+            </select>
           </div>
           <div className="settings-hint">
-            Leave blank for English. The agent will respond, greet, and summarize in your chosen language.
+            {t("settings_language_hint")}
           </div>
         </div>
       </SettingsSection>

@@ -370,6 +370,9 @@ class Kernel:
     @_user_language.setter
     def _user_language(self, val):
         self._session.user_language = val
+        # Propagate to onboarding so the setup conversation uses the right language
+        if self._onboarding and self._onboarding.is_active:
+            self._onboarding.language = val
 
     @property
     def _session_start(self):

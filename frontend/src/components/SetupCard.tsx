@@ -9,6 +9,7 @@
 import React, { useState } from "react";
 import { IconBot, IconKey, IconEye, IconEyeOff, IconCheck } from "./Icons";
 import { apiFetch } from "../hooks/useApiToken";
+import { useLocale } from "../i18n";
 
 interface SetupCardProps {
   onComplete: () => void;
@@ -26,6 +27,7 @@ const PROVIDERS = [
 ];
 
 export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
+  const { t } = useLocale();
   const [selectedProvider, setSelectedProvider] = useState("openrouter");
   const [keyValue, setKeyValue] = useState("");
   const [visible, setVisible] = useState(false);
@@ -56,7 +58,7 @@ export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
       // Brief pause to show success, then transition to chat
       setTimeout(() => onComplete(), 800);
     } catch {
-      setError("Connection failed — is the server running?");
+      setError(t("setup_connection_failed"));
       setSaving(false);
     }
   };
@@ -69,10 +71,9 @@ export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
         <div className="setup-card-icon">
           <IconBot size={32} />
         </div>
-        <h2 className="setup-card-title">Welcome to MUSE</h2>
+        <h2 className="setup-card-title">{t("setup_welcome")}</h2>
         <p className="setup-card-desc">
-          Add an API key to connect to an LLM provider. You can change this
-          anytime in Settings.
+          {t("setup_desc")}
         </p>
 
         {/* Provider selector */}
@@ -84,7 +85,7 @@ export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
           >
             {PROVIDERS.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.label}{p.recommended ? " (Recommended)" : ""}
+                {p.label}{p.recommended ? ` (${t("setup_recommended")})` : ""}
               </option>
             ))}
           </select>
@@ -94,7 +95,7 @@ export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
         <div className="setup-key-section">
           <label className="setup-key-label">
             <IconKey size={14} />
-            {provider.label} API Key
+            {provider.label} {t("setup_api_key")}
           </label>
           <p className="setup-key-hint">
             Get your key at <strong>{provider.hint.split(" — ")[0]}</strong>
@@ -105,7 +106,7 @@ export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
               <input
                 className="setup-key-input"
                 type={visible ? "text" : "password"}
-                placeholder={`Paste your ${provider.label} key here`}
+                placeholder={t("setup_paste_key", { provider: provider.label })}
                 value={keyValue}
                 onChange={(e) => setKeyValue(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSave()}
@@ -115,7 +116,7 @@ export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
               <button
                 className="setup-key-vis-btn"
                 onClick={() => setVisible((v) => !v)}
-                title={visible ? "Hide" : "Show"}
+                title={visible ? t("hide") : t("show")}
               >
                 {visible ? <IconEyeOff size={14} /> : <IconEye size={14} />}
               </button>
@@ -130,17 +131,17 @@ export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
             disabled={saving || !keyValue.trim() || done}
           >
             {done ? (
-              <><IconCheck size={16} /> Connected</>
+              <><IconCheck size={16} /> {t("setup_connected")}</>
             ) : saving ? (
-              "Connecting..."
+              t("setup_connecting")
             ) : (
-              "Connect"
+              t("setup_connect")
             )}
           </button>
         </div>
 
         <p className="setup-footer">
-          Your key is stored securely in your OS keychain — never sent anywhere except the provider.
+          {t("setup_footer")}
         </p>
       </div>
     </div>

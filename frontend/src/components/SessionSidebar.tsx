@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import ReactDOM from "react-dom";
 import { IconMessageSquare, IconPlus, IconTrash, IconGitBranch } from "./Icons";
 import { apiFetch } from "../hooks/useApiToken";
+import { useLocale, type TranslateFn } from "../i18n";
 import type { Session } from "../types/events";
 
 interface BranchTip {
@@ -19,7 +20,7 @@ interface SessionSidebarProps {
   sessionUpdateTrigger: number;
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string, t: TranslateFn): string {
   const d = new Date(iso);
   const now = new Date();
   // Compare by calendar date (midnight-to-midnight), not elapsed time
@@ -27,12 +28,12 @@ function formatDate(iso: string): string {
   const msgDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const diffDays = Math.round((today.getTime() - msgDay.getTime()) / 86400000);
   if (diffDays === 0) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 14) return "A week ago";
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
-  if (diffDays < 60) return "A month ago";
-  if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
+  if (diffDays === 1) return t("date_yesterday");
+  if (diffDays < 7) return t("date_days_ago", { n: diffDays });
+  if (diffDays < 14) return t("date_a_week_ago");
+  if (diffDays < 30) return t("date_weeks_ago", { n: Math.floor(diffDays / 7) });
+  if (diffDays < 60) return t("date_a_month_ago");
+  if (diffDays < 365) return t("date_months_ago", { n: Math.floor(diffDays / 30) });
   return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 }
 
@@ -43,6 +44,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   onForkToBranch,
   sessionUpdateTrigger,
 }) => {
+  const { t } = useLocale();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [search, setSearch] = useState("");
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -118,14 +120,14 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   return (
     <div className="sidebar">
       <div className="sidebar-header">
-        <span className="sidebar-title">Sessions</span>
+        <span className="sidebar-title">{t("sidebar_sessions")}</span>
         <button
           className="sidebar-new-btn"
           onClick={handleNew}
-          title="New conversation"
+          title={t("sidebar_new_conversation")}
         >
           <IconPlus size={14} />
-          New
+          {t("sidebar_new")}
         </button>
       </div>
 
@@ -134,7 +136,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
           <input
             type="text"
             className="sidebar-search-input"
-            placeholder="Search sessions..."
+            placeholder={t("sidebar_search")}
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
@@ -159,7 +161,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
       {/* Deep search results */}
       {searchResults.length > 0 && search.trim().length >= 3 && (
         <div className="sidebar-search-results">
-          <div className="sidebar-search-results-label">Found in messages:</div>
+          <div className="sidebar-search-results-label">{t("sidebar_found_in")}</div>
           {searchResults.map((r: any) => (
             <div
               key={r.id}
@@ -168,7 +170,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
             >
               <span className="session-item-icon"><IconMessageSquare size={15} /></span>
               <div className="session-item-content">
-                <div className="session-item-title">{r.title || "Untitled"}</div>
+                <div className="session-item-title">{r.title || t("sidebar_untitled")}</div>
                 <div className="session-item-date" style={{ fontSize: "11px", opacity: 0.7 }}>
                   ...{r.matches?.[0]?.content?.slice(0, 80)}...
                 </div>
@@ -184,7 +186,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
             <div className="sidebar-empty-icon">
               <IconMessageSquare size={18} />
             </div>
-            No conversations yet
+            {t("sidebar_no_conversations")}
           </div>
         )}
         {(search
@@ -206,21 +208,21 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
               </span>
               <div className="session-item-content">
                 <div className="session-item-title">{s.title}</div>
-                <div className="session-item-date">{formatDate(s.updated_at)}</div>
+                <div className="session-item-date">{formatDate(s.updated_at, t)}</div>
               </div>
               <button
                 className="session-item-branch"
                 onClick={(e) => handleBranchToggle(e, s.id)}
-                title="Show branches"
-                aria-label="Show branches"
+                title={t("sidebar_show_branches")}
+                aria-label={t("sidebar_show_branches")}
               >
                 <IconGitBranch size={13} />
               </button>
               <button
                 className="session-item-delete"
                 onClick={(e) => handleDeleteClick(e, s.id)}
-                title="Delete session"
-                aria-label="Delete session"
+                title={t("sidebar_delete_title")}
+                aria-label={t("sidebar_delete_title")}
               >
                 <IconTrash size={13} />
               </button>
@@ -238,7 +240,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
                     <span className="branch-item-text">
                       {b.content.slice(0, 50)}{b.content.length > 50 ? "..." : ""}
                     </span>
-                    <span className="branch-item-date">{formatDate(b.created_at)}</span>
+                    <span className="branch-item-date">{formatDate(b.created_at, t)}</span>
                   </div>
                 ))}
               </div>
@@ -255,28 +257,28 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
           onClick={() => setPendingDeleteId(null)}
         >
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-title">Delete session</div>
+            <div className="modal-title">{t("sidebar_delete_title")}</div>
             <div className="modal-text">
-              Would you also like to delete memories created during this session?
+              {t("sidebar_delete_confirm")}
             </div>
             <div className="modal-actions">
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => setPendingDeleteId(null)}
               >
-                Cancel
+                {t("cancel")}
               </button>
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => executeDelete(false)}
               >
-                Keep memories
+                {t("sidebar_keep_memories")}
               </button>
               <button
                 className="btn btn-danger btn-sm"
                 onClick={() => executeDelete(true)}
               >
-                Delete all
+                {t("sidebar_delete_all")}
               </button>
             </div>
           </div>

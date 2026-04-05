@@ -12,6 +12,7 @@ import { IconSettings, IconBot, IconPanelRight, IconMenu, IconFolderOpen, IconBr
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { apiFetch } from "./hooks/useApiToken";
 import { useNotifications } from "./hooks/useNotifications";
+import { LocaleContext, detectLocale, makeT, llmLanguage } from "./i18n";
 import type { SessionUsage, DisplayMessage, ApprovalMode } from "./types/events";
 
 type View = "chat" | "settings";
@@ -21,6 +22,22 @@ function App() {
   const [reconnectToken, setReconnectToken] = useState(0);
   const [sessionUpdateTrigger, setSessionUpdateTrigger] = useState(0);
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null); // null = loading
+
+  // ── Locale ──
+  const [locale, setLocaleRaw] = useState(detectLocale);
+  const setLocale = useCallback((l: string) => {
+    setLocaleRaw(l);
+    try { localStorage.setItem("muse_locale", l); } catch {}
+    // Persist as LLM language directive to backend
+    const lang = llmLanguage(l);
+    apiFetch("/api/settings/language", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: lang }),
+    }).catch(() => {});
+  }, []);
+  const t = useMemo(() => makeT(locale), [locale]);
+  const localeCtx = useMemo(() => ({ locale, setLocale, t }), [locale, setLocale, t]);
 
   // Connect WebSocket immediately — don't wait for the provider check.
   // The greeting will still arrive while the setup card renders if needed.
@@ -242,12 +259,14 @@ function App() {
   // First-run setup — show before anything else
   if (needsSetup === true) {
     return (
-      <div className="app">
-        <SetupCard onComplete={() => {
-          setNeedsSetup(false);
-          setReconnectToken((t) => t + 1);
-        }} />
-      </div>
+      <LocaleContext.Provider value={localeCtx}>
+        <div className="app">
+          <SetupCard onComplete={() => {
+            setNeedsSetup(false);
+            setReconnectToken((t) => t + 1);
+          }} />
+        </div>
+      </LocaleContext.Provider>
     );
   }
 
@@ -257,6 +276,7 @@ function App() {
   }
 
   return (
+    <LocaleContext.Provider value={localeCtx}>
     <div className="app">
       <a href="#main-content" className="skip-link">Skip to content</a>
 
@@ -444,6 +464,7 @@ function App() {
         </div>
       )}
     </div>
+    </LocaleContext.Provider>
   );
 }
 

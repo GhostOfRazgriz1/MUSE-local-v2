@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { IconX, IconTrash, IconPlus, IconBrain, IconChevronDown, IconChevronRight, IconCheck } from "./Icons";
 import { apiFetch } from "../hooks/useApiToken";
+import { useLocale, type TranslateFn } from "../i18n";
 
 interface MemoryItem {
   id: number;
@@ -44,19 +45,20 @@ function nsSort(a: string, b: string): number {
 }
 
 /** Format ISO date to a friendly relative or short date. */
-function friendlyDate(iso: string): string {
+function friendlyDate(iso: string, t: TranslateFn): string {
   const d = new Date(iso);
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
   const diffDays = Math.floor(diffMs / 86_400_000);
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+  if (diffDays === 0) return t("date_today");
+  if (diffDays === 1) return t("date_yesterday");
+  if (diffDays < 7) return t("date_days_ago", { n: diffDays });
+  if (diffDays < 30) return t("date_weeks_ago", { n: Math.floor(diffDays / 7) });
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
+  const { t } = useLocale();
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [groups, setGroups] = useState<Record<string, MemoryItem[]>>({});
   const [relationship, setRelationship] = useState<RelationshipInfo | null>(null);
@@ -168,7 +170,7 @@ export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
     );
     const groups: { label: string; items: MemoryItem[] }[] = [];
     for (const item of sorted) {
-      const label = friendlyDate(item.created_at);
+      const label = friendlyDate(item.created_at, t);
       const last = groups[groups.length - 1];
       if (last && last.label === label) {
         last.items.push(item);
@@ -177,7 +179,7 @@ export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
       }
     }
     return groups;
-  }, [items]);
+  }, [items, t]);
 
   return (
     <div className="memory-panel">
@@ -185,26 +187,26 @@ export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
       <div className="memory-panel-header">
         <div className="memory-panel-title">
           <IconBrain size={16} />
-          <span>What I Know</span>
+          <span>{t("memory_title")}</span>
         </div>
-        <button className="memory-panel-close" onClick={onClose} aria-label="Close">
+        <button className="memory-panel-close" onClick={onClose} aria-label={t("close")}>
           <IconX size={16} />
         </button>
       </div>
 
       <div className="memory-panel-body">
         {loading ? (
-          <div className="memory-panel-empty">Loading memories...</div>
+          <div className="memory-panel-empty">{t("memory_loading")}</div>
         ) : totalCount === 0 ? (
           <div className="memory-panel-empty">
             <IconBrain size={24} style={{ opacity: 0.3 }} />
-            <p>I'm still getting to know you.</p>
+            <p>{t("memory_empty_title")}</p>
             <p className="memory-panel-empty-sub">
-              Tell me something about yourself, or just keep chatting — I'll pick things up naturally.
+              {t("memory_empty_sub")}
             </p>
             <button className="memory-add-btn" onClick={() => setAddingOpen(true)}>
               <IconPlus size={14} />
-              Tell me something
+              {t("memory_tell_me")}
             </button>
           </div>
         ) : (
@@ -242,12 +244,12 @@ export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
             <div className="memory-profile-section">
               <div className="memory-section-header">
                 <span className="memory-section-label">
-                  {totalCount} {totalCount === 1 ? "memory" : "memories"}
+                  {totalCount === 1 ? t("memory_count_one") : t("memory_count", { n: totalCount })}
                 </span>
                 <button
                   className="memory-add-btn-sm"
                   onClick={() => setAddingOpen(!addingOpen)}
-                  title="Add a memory"
+                  title={t("memory_add_title")}
                 >
                   <IconPlus size={14} />
                 </button>
@@ -259,7 +261,7 @@ export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
                     ref={addInputRef}
                     className="memory-add-input"
                     type="text"
-                    placeholder="e.g. I like sushi, I work at..."
+                    placeholder={t("memory_add_placeholder")}
                     value={addingValue}
                     onChange={(e) => setAddingValue(e.target.value)}
                     onKeyDown={(e) => {
@@ -268,7 +270,7 @@ export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
                     }}
                   />
                   <button className="memory-add-confirm" onClick={handleAdd} disabled={!addingValue.trim()}>
-                    Add
+                    {t("add")}
                   </button>
                 </div>
               )}
@@ -293,8 +295,8 @@ export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
                               className="memory-item-delete"
                               onClick={() => handleDelete(m.namespace, m.key)}
                               disabled={deletingKey === `${m.namespace}/${m.key}`}
-                              title="Forget this"
-                              aria-label="Delete memory"
+                              title={t("memory_forget")}
+                              aria-label={t("memory_delete")}
                             >
                               <IconTrash size={12} />
                             </button>
@@ -310,7 +312,7 @@ export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
             {/* Timeline section */}
             <div className="memory-timeline-section">
               <div className="memory-section-header">
-                <span className="memory-section-label">Timeline</span>
+                <span className="memory-section-label">{t("memory_timeline")}</span>
               </div>
               {timelineGroups.map((tg) => (
                 <div key={tg.label} className="memory-timeline-day">
@@ -326,8 +328,8 @@ export const MemoryPanel: React.FC<MemoryPanelProps> = ({ onClose }) => {
                         className="memory-item-delete"
                         onClick={() => handleDelete(m.namespace, m.key)}
                         disabled={deletingKey === `${m.namespace}/${m.key}`}
-                        title="Forget this"
-                        aria-label="Delete memory"
+                        title={t("memory_forget")}
+                        aria-label={t("memory_delete")}
                       >
                         <IconTrash size={12} />
                       </button>

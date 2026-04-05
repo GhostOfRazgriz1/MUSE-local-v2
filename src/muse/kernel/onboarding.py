@@ -86,16 +86,37 @@ Only the Character and Communication Style sections should be customised."""
 class OnboardingFlow:
     """LLM-driven first-session setup."""
 
-    def __init__(self, config: Config, provider, model: str):
+    def __init__(self, config: Config, provider, model: str, language: str = ""):
         self._config = config
         self._provider = provider
         self._model = model
+        self._language = language
         self._history: list[dict] = []
         self._done = False
 
     @property
     def is_active(self) -> bool:
         return not self._done
+
+    @property
+    def language(self) -> str:
+        return self._language
+
+    @language.setter
+    def language(self, value: str) -> None:
+        self._language = value
+
+    def _system_prompt(self) -> str:
+        """Return the onboarding system prompt, with a language directive if set."""
+        prompt = _ONBOARDING_SYSTEM
+        if self._language:
+            prompt += (
+                f"\n\nIMPORTANT: Conduct this entire onboarding conversation in {self._language}. "
+                f"All your questions, confirmations, and the greeting must be in {self._language}. "
+                "However, the Principles and Boundaries sections in the identity file must remain "
+                "in English exactly as shown above."
+            )
+        return prompt
 
     @staticmethod
     def needs_onboarding(config: Config) -> bool:
@@ -119,7 +140,7 @@ class OnboardingFlow:
         result = await self._provider.complete(
             model=self._model,
             messages=[{"role": "user", "content": "(The user just opened the app for the first time. Start the onboarding.)"}],
-            system=_ONBOARDING_SYSTEM,
+            system=self._system_prompt(),
             max_tokens=300,
         )
         reply = result.text.strip()
@@ -134,7 +155,7 @@ class OnboardingFlow:
         result = await self._provider.complete(
             model=self._model,
             messages=self._history,
-            system=_ONBOARDING_SYSTEM,
+            system=self._system_prompt(),
             max_tokens=1500,
         )
         reply = result.text.strip()

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { IconX, IconClock } from "./Icons";
 import { apiFetch } from "../hooks/useApiToken";
+import { useLocale } from "../i18n";
 import type { ChatEvent } from "../types/events";
 
 interface TaskTrayProps {
@@ -28,6 +29,7 @@ function formatElapsed(ms: number): string {
 }
 
 export const TaskTray: React.FC<TaskTrayProps> = ({ events }) => {
+  const { t } = useLocale();
   const [tasks, setTasks] = useState<Map<string, TrackedTask>>(new Map());
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
   const processedCountRef = useRef(0);
@@ -112,7 +114,7 @@ export const TaskTray: React.FC<TaskTrayProps> = ({ events }) => {
   return (
     <div className="task-popover-inner">
       <div className="task-popover-header">
-        <span className="task-popover-title">Tasks</span>
+        <span className="task-popover-title">{t("task_title")}</span>
         <span className="task-popover-count">{taskList.length}</span>
       </div>
 
@@ -120,7 +122,7 @@ export const TaskTray: React.FC<TaskTrayProps> = ({ events }) => {
         {taskList.length === 0 ? (
           <div className="task-tray-empty">
             <div className="task-tray-empty-icon"><IconClock size={16} /></div>
-            No active tasks
+            {t("task_none")}
           </div>
         ) : (
           taskList.map((task) => (
@@ -132,13 +134,13 @@ export const TaskTray: React.FC<TaskTrayProps> = ({ events }) => {
               <div className="task-card-header">
                 <span className="task-card-name">{task.skill_name}</span>
                 <div className="task-card-status">
-                  <span className={`status-badge ${task.status}`}>{task.status}</span>
+                  <span className={`status-badge ${task.status}`}>{task.status === "running" ? t("task_running") : task.status === "completed" ? t("task_completed") : t("task_failed")}</span>
                   {task.status === "running" && (
                     <button
                       className="task-card-kill"
                       onClick={(e) => handleKill(task.id, e)}
-                      title="Kill task"
-                      aria-label="Kill task"
+                      title={t("task_kill")}
+                      aria-label={t("task_kill")}
                     >
                       <IconX size={14} />
                     </button>
@@ -150,9 +152,9 @@ export const TaskTray: React.FC<TaskTrayProps> = ({ events }) => {
               </div>
               {expandedTask === task.id && (
                 <div className="task-card-details">
-                  <div className="task-detail-row"><span className="task-detail-label">Message</span> {task.message}</div>
-                  {task.summary && <div className="task-detail-row"><span className="task-detail-label">Summary</span> {task.summary}</div>}
-                  {task.error && <div className="task-detail-row task-detail-error"><span className="task-detail-label">Error</span> {task.error}</div>}
+                  <div className="task-detail-row"><span className="task-detail-label">{t("task_message")}</span> {task.message}</div>
+                  {task.summary && <div className="task-detail-row"><span className="task-detail-label">{t("task_summary")}</span> {task.summary}</div>}
+                  {task.error && <div className="task-detail-row task-detail-error"><span className="task-detail-label">{t("task_error")}</span> {task.error === "Cancelled" ? t("task_cancelled") : task.error}</div>}
                 </div>
               )}
             </div>
