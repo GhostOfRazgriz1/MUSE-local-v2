@@ -214,7 +214,7 @@ def create_app(orchestrator=None) -> FastAPI:
                 raise HTTPException(404, "Not found")
             file_path = (frontend_dist / path).resolve()
             # Block path traversal — resolved path must stay inside frontend_dist
-            if not str(file_path).startswith(str(_frontend_root)):
+            if not file_path.is_relative_to(_frontend_root):
                 raise HTTPException(404, "Not found")
             if file_path.is_file():
                 return _FileResponse(str(file_path))

@@ -162,6 +162,17 @@ class OAuthManager:
             port = self._config.server.port
             redirect_uri = f"http://localhost:{port}/api/oauth/callback"
 
+        # Validate redirect_uri is a localhost callback to prevent open-redirect
+        from urllib.parse import urlparse as _urlparse
+        _parsed_uri = _urlparse(redirect_uri)
+        if _parsed_uri.hostname not in ("localhost", "127.0.0.1"):
+            raise ValueError(
+                "redirect_uri must point to localhost (got "
+                f"{_parsed_uri.hostname!r})"
+            )
+        if not _parsed_uri.path.rstrip("/").endswith("/api/oauth/callback"):
+            raise ValueError("redirect_uri must end with /api/oauth/callback")
+
         self._pending[state] = _PendingFlow(
             provider=provider,
             state=state,

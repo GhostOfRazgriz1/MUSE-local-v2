@@ -124,10 +124,14 @@ class DreamingManager:
         import json
         import re
 
-        # Build the conversation text
+        # Build the conversation text — cap length to limit LLM input size
+        # and reduce prompt injection surface from very long conversations.
+        _MAX_DREAM_CHARS = 30_000
         conv_text = "\n".join(
             f"{t['role']}: {t['content']}" for t in history
         )
+        if len(conv_text) > _MAX_DREAM_CHARS:
+            conv_text = conv_text[-_MAX_DREAM_CHARS:]
 
         model = await self._registry.get("model_router").resolve_model()
 

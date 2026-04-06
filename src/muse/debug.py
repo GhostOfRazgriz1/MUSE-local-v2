@@ -26,11 +26,19 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Maximum size of a single debug log file before rotation (10 MB).
+_MAX_LOG_SIZE = 10 * 1024 * 1024
+# Maximum number of debug log files to retain (older ones are deleted).
+_MAX_LOG_FILES = 10
+
 
 class DebugTracer:
     """Structured event tracer that writes JSON lines to a log file.
 
     When ``enabled=False`` every method is a no-op (zero overhead).
+
+    Log rotation: files are rotated at ``_MAX_LOG_SIZE`` bytes and the
+    oldest files beyond ``_MAX_LOG_FILES`` are automatically cleaned up.
     """
 
     def __init__(self, enabled: bool = False, logs_dir: Path | None = None):
@@ -38,14 +46,46 @@ class DebugTracer:
         self._file = None
         self._start = time.monotonic()
         self._path: Path | None = None
+        self._logs_dir = logs_dir
+        self._bytes_written = 0
 
         if enabled and logs_dir:
             logs_dir.mkdir(parents=True, exist_ok=True)
+            self._cleanup_old_logs(logs_dir)
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self._path = logs_dir / f"debug_{stamp}.jsonl"
             self._file = open(self._path, "a", encoding="utf-8")
             logger.info("Debug tracer logging to %s", self._path)
             self.event("tracer", "started", path=str(self._path))
+
+    @staticmethod
+    def _cleanup_old_logs(logs_dir: Path) -> None:
+        """Remove old debug log files beyond the retention limit."""
+        try:
+            log_files = sorted(
+                logs_dir.glob("debug_*.jsonl"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for old_file in log_files[_MAX_LOG_FILES - 1:]:
+                old_file.unlink(missing_ok=True)
+        except Exception as e:
+            logger.debug("Log cleanup failed: %s", e)
+
+    def _rotate_if_needed(self) -> None:
+        """Rotate to a new log file if the current one exceeds the size limit."""
+        if self._bytes_written < _MAX_LOG_SIZE or not self._logs_dir:
+            return
+        try:
+            if self._file:
+                self._file.close()
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self._path = self._logs_dir / f"debug_{stamp}.jsonl"
+            self._file = open(self._path, "a", encoding="utf-8")
+            self._bytes_written = 0
+            self._cleanup_old_logs(self._logs_dir)
+        except Exception as e:
+            logger.debug("Log rotation failed: %s", e)
 
     # ── Core ────────────────────────────────────────────────────
 
@@ -61,8 +101,11 @@ class DebugTracer:
             "data": _sanitize(data),
         }
         try:
-            self._file.write(json.dumps(line, default=str) + "\n")
+            encoded = json.dumps(line, default=str) + "\n"
+            self._file.write(encoded)
             self._file.flush()
+            self._bytes_written += len(encoded)
+            self._rotate_if_needed()
         except Exception as e:
             import sys
             print(f"[DebugTracer] write failed: {e}", file=sys.stderr)

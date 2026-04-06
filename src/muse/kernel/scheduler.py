@@ -31,6 +31,9 @@ POLL_INTERVAL = 30
 # Prevents resource exhaustion from overly frequent scheduling.
 MIN_INTERVAL_SECONDS = 300
 
+# Maximum instruction length to prevent prompt injection via large payloads.
+MAX_INSTRUCTION_LENGTH = 2000
+
 
 class Scheduler:
     """Runs skills on a recurring schedule."""
@@ -70,6 +73,11 @@ class Scheduler:
             raise ValueError(
                 f"Interval must be at least {MIN_INTERVAL_SECONDS}s "
                 f"({MIN_INTERVAL_SECONDS // 60} minutes)"
+            )
+        if len(instruction) > MAX_INSTRUCTION_LENGTH:
+            raise ValueError(
+                f"Instruction too long ({len(instruction)} chars, "
+                f"max {MAX_INSTRUCTION_LENGTH})"
             )
         task_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc)

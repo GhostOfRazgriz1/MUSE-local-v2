@@ -579,7 +579,7 @@ function OAuthSetupForm({
         body: JSON.stringify({ value: clientSecret.trim() }),
       });
       // Redirect to OAuth start -- the backend will load credentials and redirect to provider
-      window.location.href = `/api/oauth/start?provider=${providerName}`;
+      window.location.href = `/api/oauth/start?provider=${encodeURIComponent(providerName)}`;
     } catch {
       setError("Failed to save credentials.");
       setSaving(false);

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import subprocess
@@ -282,20 +283,24 @@ async def upload_file(file: UploadFile):
 
     # Verify destination is inside the upload directory (no symlink escape)
     resolved = dest.resolve()
-    if not str(resolved).startswith(str(upload_dir.resolve())):
+    if not resolved.is_relative_to(upload_dir.resolve()):
         raise HTTPException(400, "Invalid upload destination")
 
-    # Read with size limit to prevent OOM
+    # Read with size limit and timeout to prevent OOM and slow-client DoS
     chunks: list[bytes] = []
     total = 0
-    while True:
-        chunk = await file.read(1024 * 1024)  # 1 MB at a time
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > MAX_UPLOAD_BYTES:
-            raise HTTPException(413, f"File exceeds {MAX_UPLOAD_BYTES // (1024*1024)} MB limit")
-        chunks.append(chunk)
+    try:
+        async with asyncio.timeout(120):  # 2-minute upload timeout
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1 MB at a time
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(413, f"File exceeds {MAX_UPLOAD_BYTES // (1024*1024)} MB limit")
+                chunks.append(chunk)
+    except TimeoutError:
+        raise HTTPException(408, "Upload timed out")
     content = b"".join(chunks)
 
     dest.write_bytes(content)
@@ -340,7 +345,7 @@ async def browse_directory(
         # Use resolve() to follow symlinks before the check.
         home = Path.home().resolve()
         resolved_target = target.resolve()
-        if not str(resolved_target).startswith(str(home)):
+        if not resolved_target.is_relative_to(home):
             raise HTTPException(403, "Cannot browse outside home directory")
     else:
         target = await _get_workspace()
