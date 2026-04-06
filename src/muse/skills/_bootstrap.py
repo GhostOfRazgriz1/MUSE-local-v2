@@ -46,9 +46,18 @@ async def main():
         sys.exit(1)
     skill_path = str(skill_path_obj)
     ipc_dir = config.get("ipc_dir", "")
+    ipc_token = config.get("ipc_token", "")
     brief = config["brief"]
     permissions = config["permissions"]
     skill_config = config.get("config", {})
+
+    # Validate IPC token is present — the orchestrator must provide one.
+    # When the IPC server is connected, this token is sent as the first
+    # message to authenticate the subprocess.
+    if not ipc_token:
+        print(json.dumps({"type": "status", "status": "failed",
+                          "error": "Missing ipc_token in config"}))
+        sys.exit(1)
 
     # Connect to orchestrator IPC
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "sdk"))

@@ -38,8 +38,14 @@ async def create_orchestrator(config: Config | None = None):
     from muse.memory.cache import MemoryCache
     from muse.memory.promotion import PromotionManager
     from muse.memory.demotion import DemotionManager
+    from muse.memory.encryption import MemoryEncryption
 
-    memory_repo = MemoryRepository(db, embedding_service)
+    try:
+        memory_enc = MemoryEncryption()
+    except Exception as exc:
+        logger.warning("Memory encryption disabled: %s", exc)
+        memory_enc = None
+    memory_repo = MemoryRepository(db, embedding_service, encryption=memory_enc)
     memory_cache = MemoryCache(config.memory.cache_budget_mb)
     promotion_manager = PromotionManager(
         memory_repo, memory_cache, embedding_service,

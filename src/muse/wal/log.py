@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS wal_entries (
     operation   TEXT    NOT NULL,
     payload_json TEXT   NOT NULL,
     committed   INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT    NOT NULL
+    created_at  TEXT    NOT NULL,
+    replayed_at TEXT
 );
 """
 
@@ -54,6 +55,13 @@ class WriteAheadLog:
     async def initialize(self) -> None:
         """Create the ``wal_entries`` table if it does not exist."""
         await self._db.execute(CREATE_TABLE_SQL)
+        # Migrate: add replayed_at column if missing (existing installs)
+        try:
+            await self._db.execute(
+                "ALTER TABLE wal_entries ADD COLUMN replayed_at TEXT"
+            )
+        except Exception:
+            pass  # column already exists
         await self._db.commit()
 
     # ------------------------------------------------------------------
@@ -108,21 +116,39 @@ class WriteAheadLog:
     # ------------------------------------------------------------------
 
     async def get_uncommitted(self) -> list[dict[str, Any]]:
-        """Return all uncommitted entries (for crash-recovery replay)."""
+        """Return all uncommitted entries (for crash-recovery replay).
+
+        Skips entries that were already replayed or have corrupted
+        payloads, logging warnings for each.
+        """
         cursor = await self._db.execute(
-            "SELECT id, operation, payload_json, created_at "
+            "SELECT id, operation, payload_json, created_at, replayed_at "
             "FROM wal_entries WHERE committed = 0 ORDER BY id ASC"
         )
         rows = await cursor.fetchall()
-        return [
-            {
+        entries: list[dict[str, Any]] = []
+        for row in rows:
+            # Skip already-replayed entries (prevents double execution)
+            if row[4] is not None:
+                logger.debug("WAL skip already-replayed id=%d", row[0])
+                continue
+            # Skip entries with corrupted payloads
+            try:
+                payload = json.loads(row[2])
+            except (json.JSONDecodeError, TypeError) as exc:
+                logger.warning("WAL skip corrupted entry id=%d: %s", row[0], exc)
+                continue
+            # Validate operation is recognized
+            if row[1] not in VALID_OPERATIONS:
+                logger.warning("WAL skip unknown operation id=%d op=%s", row[0], row[1])
+                continue
+            entries.append({
                 "id": row[0],
                 "operation": row[1],
-                "payload": json.loads(row[2]),
+                "payload": payload,
                 "created_at": row[3],
-            }
-            for row in rows
-        ]
+            })
+        return entries
 
     async def replay(self) -> list[dict[str, Any]]:
         """Return uncommitted entries sorted by id for ordered replay.
@@ -131,6 +157,17 @@ class WriteAheadLog:
         makes the intent explicit in calling code.
         """
         return await self.get_uncommitted()
+
+    async def mark_replayed(self, entry_id: int) -> None:
+        """Mark an entry as replayed (prevents double execution on
+        subsequent crashes before the entry is committed)."""
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.execute(
+            "UPDATE wal_entries SET replayed_at = ? WHERE id = ?",
+            (now, entry_id),
+        )
+        await self._db.commit()
+        logger.debug("WAL mark_replayed id=%d", entry_id)
 
     # ------------------------------------------------------------------
     # Maintenance

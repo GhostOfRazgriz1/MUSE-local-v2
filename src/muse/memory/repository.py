@@ -6,6 +6,7 @@ conversation_archive tables via aiosqlite.
 
 from __future__ import annotations
 
+import logging
 import struct
 from datetime import datetime, timezone
 from typing import Optional
@@ -13,6 +14,9 @@ from typing import Optional
 import aiosqlite
 
 from muse.memory.embeddings import EmbeddingService
+from muse.memory.encryption import MemoryEncryption
+
+_logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -31,14 +35,19 @@ def _blob_to_embedding(blob: bytes) -> list[float]:
     return list(struct.unpack(f"<{n}f", blob))
 
 
-def _row_to_dict(row: aiosqlite.Row, columns: list[str]) -> dict:
-    """Convert a database row to a dict, decoding the embedding blob."""
+def _row_to_dict(row: aiosqlite.Row, columns: list[str],
+                  enc: MemoryEncryption | None = None) -> dict:
+    """Convert a database row to a dict, decoding the embedding blob
+    and decrypting the value column for sensitive namespaces."""
     d: dict = {}
     for i, col in enumerate(columns):
         val = row[i]
         if col == "embedding" and isinstance(val, bytes):
             val = _blob_to_embedding(val)
         d[col] = val
+    # Decrypt value if it carries the ENC: prefix
+    if enc and "value" in d and isinstance(d["value"], str):
+        d["value"] = enc.decrypt(d["value"])
     return d
 
 
@@ -61,9 +70,11 @@ class MemoryRepository:
         self,
         db: aiosqlite.Connection,
         embedding_service: EmbeddingService,
+        encryption: MemoryEncryption | None = None,
     ) -> None:
         self._db = db
         self._emb = embedding_service
+        self._enc = encryption
 
     # ------------------------------------------------------------------
     # Read
@@ -82,7 +93,7 @@ class MemoryRepository:
             row = await cursor.fetchone()
             if row is None:
                 return None
-            return _row_to_dict(row, MEMORY_COLUMNS)
+            return _row_to_dict(row, MEMORY_COLUMNS, enc=self._enc)
 
     async def list_keys(self, namespace: str, prefix: str = "") -> list[str]:
         """List all keys in a namespace, optionally filtered by prefix."""
@@ -119,7 +130,7 @@ class MemoryRepository:
 
         async with self._db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
-            return [_row_to_dict(r, MEMORY_COLUMNS) for r in rows]
+            return [_row_to_dict(r, MEMORY_COLUMNS, enc=self._enc) for r in rows]
 
     async def get_top_by_frequency(self, limit: int = 100) -> list[dict]:
         """Return entries ordered by access_count descending."""
@@ -131,7 +142,7 @@ class MemoryRepository:
         )
         async with self._db.execute(sql, (limit,)) as cursor:
             rows = await cursor.fetchall()
-            return [_row_to_dict(r, MEMORY_COLUMNS) for r in rows]
+            return [_row_to_dict(r, MEMORY_COLUMNS, enc=self._enc) for r in rows]
 
     # ------------------------------------------------------------------
     # Vector similarity search
@@ -182,7 +193,7 @@ class MemoryRepository:
                 sim = row[len(MEMORY_COLUMNS)]  # the appended sim column
                 if sim < min_score:
                     continue
-                entry = _row_to_dict(row, MEMORY_COLUMNS)
+                entry = _row_to_dict(row, MEMORY_COLUMNS, enc=self._enc)
                 entry["similarity"] = sim
                 results.append(entry)
             return results
@@ -209,7 +220,7 @@ class MemoryRepository:
 
         scored: list[tuple[float, dict]] = []
         for row in rows:
-            entry = _row_to_dict(row, MEMORY_COLUMNS)
+            entry = _row_to_dict(row, MEMORY_COLUMNS, enc=self._enc)
             emb = entry.get("embedding")
             if not emb:
                 continue
@@ -271,12 +282,18 @@ class MemoryRepository:
         """
         now = _now_iso()
 
-        # Generate embedding for text values
+        # Encrypt value for sensitive namespaces before storage.
+        # Embedding is computed on the plaintext (before encryption) so
+        # semantic search still works on encrypted entries.
+        store_value = value
+        if self._enc and self._enc.should_encrypt(namespace) and value:
+            store_value = self._enc.encrypt(value)
+
+        # Generate embedding for text values (always on plaintext)
         embedding_blob: bytes | None = None
         if precomputed_embedding is not None:
             embedding_blob = _embedding_to_blob(precomputed_embedding)
         elif value_type == "text" and value:
-            vec = await self._emb.embed_async(value)
             embedding_blob = _embedding_to_blob(vec)
 
         sql = (
@@ -292,7 +309,7 @@ class MemoryRepository:
             "  source_task_id = excluded.source_task_id"
         )
         await self._db.execute(sql, (
-            namespace, key, value, value_type, embedding_blob,
+            namespace, key, store_value, value_type, embedding_blob,
             now, now, now,
             source_task_id,
         ))

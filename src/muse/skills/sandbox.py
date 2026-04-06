@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import secrets as _secrets
+
 from muse.debug import get_tracer
 from muse.skills.manifest import SkillManifest
 from muse.skills.warm_pool import WarmPool
@@ -271,11 +273,17 @@ class SkillSandbox:
         skill_dir = self._skills_dir / skill_id
         _validate_entry_point(skill_dir, manifest.entry_point)
 
+        # Generate a one-time IPC authentication token. Passed to the
+        # subprocess via stdin (trusted channel). When the IPC server is
+        # built, the subprocess must present this token on first message.
+        ipc_token = _secrets.token_urlsafe(32)
+
         payload = json.dumps({
             "task_id": task_id,
             "skill_id": skill_id,
             "skill_dir": str(skill_dir),
             "entry_point": manifest.entry_point,
+            "ipc_token": ipc_token,
             "brief": brief,
             "permissions": permissions,
             "config": config,
