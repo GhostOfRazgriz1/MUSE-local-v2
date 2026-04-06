@@ -59,6 +59,20 @@ def _err(msg: str) -> dict:
     return {"payload": None, "summary": msg, "success": False}
 
 
+# Shell metacharacters that chain or inject additional commands.
+# These allow an LLM-extracted "single command" to actually execute
+# multiple commands, bypassing the user's approval of only one.
+_DANGEROUS_METACHAR_RE = re.compile(
+    r"[;`]"                   # command separator, backtick subshell
+    r"|&&"                    # AND chain
+    r"|\|\|"                  # OR chain
+    r"|\$\("                  # $() subshell
+    r"|\$\{"                  # ${} parameter expansion (can run code)
+    r"|>\s*/dev/sd"           # overwrite block device
+    r"|\|\s*(?:sh|bash|zsh|cmd|powershell)",  # pipe into shell
+)
+
+
 def _classify_command(cmd: str) -> str:
     """Classify a command's risk tier.
 
@@ -69,6 +83,11 @@ def _classify_command(cmd: str) -> str:
     for blocked in _BLOCKED_COMMANDS:
         if blocked in lower:
             return "blocked"
+
+    # Block commands containing shell injection metacharacters.
+    # The LLM should extract a single command, not a chain.
+    if _DANGEROUS_METACHAR_RE.search(cmd):
+        return "blocked"
 
     for prefix in _READ_ONLY_PREFIXES:
         if lower.startswith(prefix):

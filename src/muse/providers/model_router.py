@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 import aiosqlite
@@ -9,6 +10,10 @@ if TYPE_CHECKING:
     from .registry import ProviderRegistry
 
 logger = logging.getLogger(__name__)
+
+# Model IDs must match provider/model format or a simple name (local models).
+# Rejects URLs, paths, and other injection attempts.
+_VALID_MODEL_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_./:@-]{0,200}$")
 
 DEFAULT_CONTEXT_WINDOW = 128_000
 
@@ -53,7 +58,10 @@ class ModelRouter:
         if no capable model is found.
         """
         if task_override:
-            return task_override
+            if not _VALID_MODEL_ID.match(task_override):
+                logger.warning("Rejected invalid task_override model ID: %s", task_override[:50])
+            else:
+                return task_override
 
         # Capability-based routing (e.g. vision/video tasks)
         if required_capabilities:

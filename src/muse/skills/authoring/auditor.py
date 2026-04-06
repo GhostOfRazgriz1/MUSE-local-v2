@@ -82,6 +82,22 @@ BANNED_CALLS: frozenset[str] = frozenset({
     "breakpoint",
     "exit",
     "quit",
+    # File I/O — skills must use ctx.files, not raw open()
+    "open",
+    # Reflection / introspection — sandbox escape vectors
+    "getattr",
+    "setattr",
+    "delattr",
+    "vars",
+    "dir",
+    # Interactive I/O — blocks the skill worker (DoS)
+    "input",
+    # Dangerous dunder access patterns
+    "__builtins__",
+    "__subclasses__",
+    "__globals__",
+    "__code__",
+    "__bases__",
     "os.system",
     "os.popen",
     "os.exec",

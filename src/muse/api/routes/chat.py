@@ -159,8 +159,9 @@ async def chat_websocket(
         for task_event in orchestrator.get_active_tasks_for_session(session_id):
             await websocket.send_json(task_event)
 
-    # Subscribe to orchestrator events
-    event_queue = orchestrator.subscribe()
+    # Subscribe to orchestrator events — pass session_id so the bus
+    # filters at source (defense-in-depth; forward_events also filters).
+    event_queue = orchestrator.subscribe(session_id=session_id)
 
     async def forward_events():
         try:

@@ -3124,9 +3124,13 @@ class Kernel:
     # Event streaming
     # ------------------------------------------------------------------
 
-    def subscribe(self) -> asyncio.Queue:
-        """Subscribe to orchestrator events (for WebSocket push)."""
-        return self._event_bus.subscribe()
+    def subscribe(self, session_id: str | None = None) -> asyncio.Queue:
+        """Subscribe to orchestrator events (for WebSocket push).
+
+        When *session_id* is provided, the bus only delivers events
+        tagged with that session (plus untagged global events).
+        """
+        return self._event_bus.subscribe(session_id=session_id)
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
         self._event_bus.unsubscribe(queue)

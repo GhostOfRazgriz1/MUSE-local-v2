@@ -40,8 +40,10 @@ SAFE_BUILTINS = {
     "next": next, "oct": oct, "ord": ord, "pow": pow, "print": print,
     "range": range, "repr": repr, "reversed": reversed, "round": round,
     "set": set, "slice": slice, "sorted": sorted, "str": str,
-    "sum": sum, "tuple": tuple, "type": type, "zip": zip,
-    "eval": eval, "compile": compile,  # safe: restricted globals prevent escape
+    "sum": sum, "tuple": tuple, "zip": zip,
+    # eval, compile, type deliberately excluded — sandbox escape vectors
+    # (type.__subclasses__ exposes internal classes; eval/compile allow
+    # arbitrary code generation that bypasses static analysis)
     "True": True, "False": False, "None": None,
     "Exception": Exception, "ValueError": ValueError,
     "TypeError": TypeError, "KeyError": KeyError,

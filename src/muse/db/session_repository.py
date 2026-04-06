@@ -21,7 +21,7 @@ class SessionRepository:
 
     async def create_session(self, title: str = "New conversation") -> dict:
         """Create a new session and return it."""
-        session_id = uuid.uuid4().hex[:12]
+        session_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute(
             "INSERT INTO sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
