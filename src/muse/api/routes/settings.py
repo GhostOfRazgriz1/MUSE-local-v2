@@ -232,6 +232,61 @@ async def set_setting(key: str, body: dict, orchestrator=Depends(require_orchest
     return {"key": key, "value": value}
 
 
+@router.get("/mcp-server")
+async def mcp_server_status(orchestrator=Depends(require_orchestrator)):
+    """Get MCP server status and connection token."""
+    db = get_service("db")
+    async with db.execute(
+        "SELECT value FROM user_settings WHERE key = 'mcp_server_enabled'"
+    ) as cursor:
+        row = await cursor.fetchone()
+    enabled = bool(row and row[0] == "true")
+
+    token = None
+    if enabled:
+        from muse.mcp.server import get_or_create_mcp_token
+        token = await get_or_create_mcp_token(db)
+
+    return {"enabled": enabled, "token": token, "endpoint": "/mcp"}
+
+
+@router.put("/mcp-server")
+async def set_mcp_server(body: dict, orchestrator=Depends(require_orchestrator)):
+    """Enable or disable the MCP server.
+
+    Body: ``{"enabled": true}``
+    Returns the auth token when enabling (needed by external agents).
+    Requires server restart to take effect.
+    """
+    enabled = bool(body.get("enabled", False))
+    db = get_service("db")
+    now = datetime.now(timezone.utc).isoformat()
+
+    await db.execute(
+        "INSERT OR REPLACE INTO user_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        ("mcp_server_enabled", "true" if enabled else "false", now),
+    )
+    await db.commit()
+
+    token = None
+    if enabled:
+        from muse.mcp.server import get_or_create_mcp_token
+        token = await get_or_create_mcp_token(db)
+
+        # Hot-start the server if not already running
+        from muse.mcp import server_route
+        if server_route._server_instance is None:
+            from muse.mcp.server import MuseMCPServer
+            mcp_srv = MuseMCPServer(
+                memory_repo=get_service("memory_repo"),
+                embedding_service=get_service("embeddings"),
+            )
+            server_route.configure(mcp_srv, db)
+            logger.info("MCP server hot-started via settings")
+
+    return {"enabled": enabled, "token": token, "endpoint": "/mcp"}
+
+
 @router.get("/models")
 async def list_models(orchestrator=Depends(require_orchestrator)):
     """List available LLM models from the provider."""

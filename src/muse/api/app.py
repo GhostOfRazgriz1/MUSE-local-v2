@@ -65,6 +65,26 @@ async def lifespan(app: FastAPI):
 
     _orchestrator = await create_orchestrator(config)
     await _orchestrator.start()
+
+    # Start MCP server if enabled in settings
+    try:
+        db = _orchestrator.registry.get("db")
+        async with db.execute(
+            "SELECT value FROM user_settings WHERE key = 'mcp_server_enabled'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row and row[0] == "true":
+            from muse.mcp.server import MuseMCPServer
+            from muse.mcp import server_route
+            mcp_srv = MuseMCPServer(
+                memory_repo=_orchestrator.registry.get("memory_repo"),
+                embedding_service=_orchestrator.registry.get("embeddings"),
+            )
+            server_route.configure(mcp_srv, db)
+            logger.info("MCP server enabled — listening on /mcp")
+    except Exception as e:
+        logger.debug("MCP server not started: %s", e)
+
     yield
     await _orchestrator.stop()
     tracer.close()
@@ -122,6 +142,12 @@ def create_app(orchestrator=None) -> FastAPI:
     # server-side operations (token exchange) gated by a CSRF-safe
     # state parameter.
     app.include_router(oauth.router, prefix="/api")
+
+    # MCP server endpoint — mounted as raw ASGI for streamable-http transport.
+    # Auth is handled inside the ASGI handler (bearer token, separate from main auth).
+    from starlette.routing import Mount
+    from muse.mcp.server_route import mcp_asgi_app
+    app.mount("/mcp", app=mcp_asgi_app)
 
     # Health check — unauthenticated so the frontend can verify connectivity
     @app.get("/api/health")
