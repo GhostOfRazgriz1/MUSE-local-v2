@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from starlette.requests import Request
 from starlette.responses import Response
@@ -22,6 +23,12 @@ _server_instance: MuseMCPServer | None = None
 _db = None
 _transport = None
 _server_task: asyncio.Task | None = None
+
+# Rate limiting for token validation — prevents brute-force attacks.
+# Tracks per-IP failed attempts: {ip: [timestamp, ...]}
+_AUTH_FAILURES: dict[str, list[float]] = {}
+_MAX_FAILURES = 5       # max failed attempts per window
+_FAILURE_WINDOW = 300   # 5-minute sliding window
 
 
 def configure(mcp_server: MuseMCPServer, db) -> None:
@@ -57,6 +64,21 @@ async def mcp_asgi_app(scope, receive, send):
         await response(scope, receive, send)
         return
 
+    # Identify the client for rate limiting
+    client = scope.get("client")
+    client_ip = client[0] if client else "unknown"
+
+    # Rate-limit check — reject if too many recent failures from this IP
+    now = time.monotonic()
+    failures = _AUTH_FAILURES.get(client_ip, [])
+    failures = [t for t in failures if now - t < _FAILURE_WINDOW]
+    _AUTH_FAILURES[client_ip] = failures
+    if len(failures) >= _MAX_FAILURES:
+        logger.warning("MCP auth rate-limited for %s (%d failures)", client_ip, len(failures))
+        response = Response("Too many authentication failures", status_code=429)
+        await response(scope, receive, send)
+        return
+
     # Extract Authorization header
     headers = dict(scope.get("headers", []))
     auth_value = headers.get(b"authorization", b"").decode()
@@ -68,6 +90,8 @@ async def mcp_asgi_app(scope, receive, send):
 
     token = auth_value[7:]
     if not await validate_mcp_token(_db, token):
+        _AUTH_FAILURES.setdefault(client_ip, []).append(now)
+        logger.warning("MCP auth failure from %s", client_ip)
         response = Response("Invalid token", status_code=403)
         await response(scope, receive, send)
         return

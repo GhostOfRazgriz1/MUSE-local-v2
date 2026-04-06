@@ -18,15 +18,17 @@ logger = logging.getLogger(__name__)
 # Validation patterns
 _PERMISSION_RE = re.compile(r"^\w+:\w+$")
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+")
+_SAFE_ENTRY_POINT = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9_ -]*\.py$")
 
 
 class SkillLoader:
     """Manages skill installation, updates, and removal."""
 
-    def __init__(self, db: aiosqlite.Connection, skills_dir: Path) -> None:
+    def __init__(self, db: aiosqlite.Connection, skills_dir: Path, audit_repo=None) -> None:
         self._db = db
         self._skills_dir = skills_dir
         self._manifest_cache: dict[str, SkillManifest | None] = {}
+        self._audit = audit_repo
 
     # ------------------------------------------------------------------
     # Public API
@@ -50,6 +52,20 @@ class SkillLoader:
         await self._upsert_skill_row(skill_id, manifest)
         self._manifest_cache.pop(skill_id, None)
         logger.info("Installed skill %s v%s", skill_id, manifest.version)
+
+        if self._audit:
+            await self._audit.log(
+                skill_id=skill_id,
+                permission_used="skill:install",
+                action_summary=f"Installed skill {skill_id} v{manifest.version}",
+                approval_type="auto",
+                metadata={
+                    "version": manifest.version,
+                    "is_first_party": manifest.is_first_party,
+                    "isolation_tier": manifest.isolation_tier,
+                    "permissions": manifest.permissions,
+                },
+            )
         return manifest
 
     async def uninstall(self, skill_id: str) -> None:
@@ -63,6 +79,14 @@ class SkillLoader:
         await self._db.commit()
         self._manifest_cache.pop(skill_id, None)
         logger.info("Uninstalled skill %s", skill_id)
+
+        if self._audit:
+            await self._audit.log(
+                skill_id=skill_id,
+                permission_used="skill:uninstall",
+                action_summary=f"Uninstalled skill {skill_id}",
+                approval_type="auto",
+            )
 
     async def get_installed(self) -> list[dict[str, Any]]:
         """Return a list of all installed skills with their manifests."""
@@ -172,6 +196,13 @@ class SkillLoader:
         if version and not _SEMVER_RE.match(version):
             raise ValueError(
                 f"Version '{version}' is not semver-like (expected N.N.N...)",
+            )
+
+        entry_point = data.get("entry_point", "skill.py")
+        if not _SAFE_ENTRY_POINT.match(entry_point):
+            raise ValueError(
+                f"Invalid entry_point '{entry_point}' — must be a simple .py filename "
+                "(no path separators or traversal sequences)",
             )
 
         for perm in data.get("permissions", []):

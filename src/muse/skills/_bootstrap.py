@@ -12,9 +12,13 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import re
 import sys
 import traceback
 from pathlib import Path
+
+# Entry points must be a simple filename (no directory separators or traversal)
+_SAFE_ENTRY_POINT = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9_ -]*\.py$")
 
 
 async def main():
@@ -29,7 +33,18 @@ async def main():
     skill_id = config["skill_id"]
     skill_dir = config["skill_dir"]
     entry_point = config.get("entry_point", "skill.py")
-    skill_path = str(Path(skill_dir) / entry_point)
+
+    # Validate entry_point — reject path traversal attempts
+    if not _SAFE_ENTRY_POINT.match(entry_point):
+        print(json.dumps({"type": "status", "status": "failed",
+                          "error": f"Invalid entry_point: {entry_point!r}"}))
+        sys.exit(1)
+    skill_path_obj = (Path(skill_dir) / entry_point).resolve()
+    if not skill_path_obj.is_relative_to(Path(skill_dir).resolve()):
+        print(json.dumps({"type": "status", "status": "failed",
+                          "error": "entry_point escapes skill directory"}))
+        sys.exit(1)
+    skill_path = str(skill_path_obj)
     ipc_dir = config.get("ipc_dir", "")
     brief = config["brief"]
     permissions = config["permissions"]

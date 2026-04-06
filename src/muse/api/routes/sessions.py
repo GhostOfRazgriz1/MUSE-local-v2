@@ -13,7 +13,7 @@ router = APIRouter(tags=["sessions"])
 
 
 @router.get("/sessions")
-async def list_sessions(limit: int = 50, orchestrator=Depends(require_orchestrator)):
+async def list_sessions(limit: int = Query(50, ge=1, le=500), orchestrator=Depends(require_orchestrator)):
     """Return all sessions, most recent first."""
     sessions = await orchestrator.session_repo.list_sessions(limit)
     return {"sessions": sessions}
@@ -28,7 +28,7 @@ async def create_session(body: dict | None = None, orchestrator=Depends(require_
 
 
 @router.get("/sessions/search")
-async def search_sessions(q: str = Query(..., min_length=1), limit: int = 20, orchestrator=Depends(require_orchestrator)):
+async def search_sessions(q: str = Query(..., min_length=1, max_length=500), limit: int = Query(20, ge=1, le=100), orchestrator=Depends(require_orchestrator)):
     """Search across all sessions by message content."""
 
     db = get_service("db")

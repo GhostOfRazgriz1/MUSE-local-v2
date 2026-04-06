@@ -204,7 +204,7 @@ async def create_orchestrator(config: Config | None = None):
     from muse.skills.sandbox import SkillSandbox
     from muse.skills.warm_pool import WarmPool
 
-    skill_loader = SkillLoader(db, config.skills_dir)
+    skill_loader = SkillLoader(db, config.skills_dir, audit_repo=audit_repo)
     warm_pool = WarmPool(
         pool_size=config.execution.warm_pool_size_standard,
         max_reuse=config.execution.max_reuse_cycles,

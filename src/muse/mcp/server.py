@@ -283,9 +283,14 @@ async def get_or_create_mcp_token(db) -> str:
 
 
 async def validate_mcp_token(db, token: str) -> bool:
-    """Check if the provided token matches the stored MCP server token."""
+    """Check if the provided token matches the stored MCP server token.
+
+    Uses constant-time comparison to prevent timing attacks.
+    """
     async with db.execute(
         "SELECT value FROM user_settings WHERE key = 'mcp_server_token'"
     ) as cursor:
         row = await cursor.fetchone()
-    return bool(row and row[0] == token)
+    if not row or not row[0]:
+        return False
+    return secrets.compare_digest(row[0], token)

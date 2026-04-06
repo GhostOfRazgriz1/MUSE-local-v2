@@ -161,6 +161,10 @@ async def delete_memory(namespace: str, key: str, orchestrator=Depends(require_o
     if namespace not in _DELETABLE_NS:
         raise HTTPException(403, "Cannot delete from this namespace")
 
+    # Reject path traversal in key
+    if ".." in key or key.startswith("/") or key.startswith("\\"):
+        raise HTTPException(400, "Invalid memory key")
+
     repo = get_service("memory_repo")
     existing = await repo.get(namespace, key)
     if not existing:

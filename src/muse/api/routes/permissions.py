@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from muse.api.app import get_service, require_orchestrator
 
@@ -26,7 +26,7 @@ async def pending_requests(orchestrator=Depends(require_orchestrator)):
 
 
 @router.get("/audit")
-async def audit_log(limit: int = 50, orchestrator=Depends(require_orchestrator)):
+async def audit_log(limit: int = Query(50, ge=1, le=500), orchestrator=Depends(require_orchestrator)):
     """Get the audit log."""
     entries = await get_service("audit").get_recent(limit)
     return {"entries": entries}
@@ -42,8 +42,11 @@ async def trust_budgets(orchestrator=Depends(require_orchestrator)):
 @router.post("/budgets")
 async def set_budget(body: dict, orchestrator=Depends(require_orchestrator)):
     """Set or update a trust budget."""
+    permission = body.get("permission")
+    if not permission or not isinstance(permission, str):
+        raise HTTPException(400, "permission is required")
     await get_service("trust_budget").set_budget(
-        permission=body["permission"],
+        permission=permission,
         max_actions=body.get("max_actions"),
         max_tokens=body.get("max_tokens"),
         period=body.get("period", "daily"),

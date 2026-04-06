@@ -9,6 +9,8 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response as StarletteResponse
 
 from muse.api.auth import init_auth, require_token
 from muse.config import Config
@@ -105,6 +107,18 @@ def create_app(orchestrator=None) -> FastAPI:
         version="0.1.0",
         lifespan=lifespan if not orchestrator else None,
     )
+
+    # Security headers middleware — added first so it wraps all responses
+    class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            response: StarletteResponse = await call_next(request)
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+            response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+            return response
+
+    app.add_middleware(SecurityHeadersMiddleware)
 
     app.add_middleware(
         CORSMiddleware,

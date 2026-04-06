@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from muse.api.app import require_orchestrator
 
@@ -32,7 +32,7 @@ async def list_active_tasks(orchestrator=Depends(require_orchestrator)):
 
 
 @router.get("/history")
-async def task_history(limit: int = 50, orchestrator=Depends(require_orchestrator)):
+async def task_history(limit: int = Query(50, ge=1, le=500), orchestrator=Depends(require_orchestrator)):
     """Get completed task history."""
     return {"tasks": await orchestrator.get_task_history(limit)}
 
@@ -70,10 +70,19 @@ async def list_scheduled(orchestrator=Depends(require_orchestrator)):
 @router.post("/scheduled")
 async def create_scheduled(body: dict, orchestrator=Depends(require_orchestrator)):
     """Create a new scheduled background task."""
+    skill_id = body.get("skill_id")
+    instruction = body.get("instruction")
+    if not skill_id or not isinstance(skill_id, str):
+        raise HTTPException(400, "skill_id is required")
+    if not instruction or not isinstance(instruction, str):
+        raise HTTPException(400, "instruction is required")
+    interval_seconds = int(body.get("interval_seconds", 3600))
+    if interval_seconds < 60 or interval_seconds > 86400 * 7:
+        raise HTTPException(400, "interval_seconds must be between 60 and 604800")
     task = await orchestrator.scheduler.create(
-        skill_id=body["skill_id"],
-        instruction=body["instruction"],
-        interval_seconds=body.get("interval_seconds", 3600),
+        skill_id=skill_id,
+        instruction=instruction,
+        interval_seconds=interval_seconds,
     )
     return task
 

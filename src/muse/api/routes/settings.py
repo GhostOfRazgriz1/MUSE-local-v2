@@ -106,6 +106,8 @@ async def set_local_config(body: dict, orchestrator=Depends(require_orchestrator
 
     if not address:
         raise HTTPException(400, "address is required")
+    if port < 1 or port > 65535:
+        raise HTTPException(400, "port must be between 1 and 65535")
     if not model_names:
         raise HTTPException(400, "At least one model name is required")
     if max_workers < 1:
@@ -172,6 +174,8 @@ async def test_local_connection(body: dict):
     """Test connectivity to a local LLM server without saving config."""
     address = body.get("address", "localhost").strip()
     port = int(body.get("port", 11434))
+    if port < 1 or port > 65535:
+        return {"status": "error", "message": "port must be between 1 and 65535"}
     base_url = f"http://{address}:{port}/v1"
 
     import httpx
@@ -319,8 +323,11 @@ async def get_model_overrides(orchestrator=Depends(require_orchestrator)):
 @router.put("/models/overrides/{skill_id}")
 async def set_model_override(skill_id: str, body: dict, orchestrator=Depends(require_orchestrator)):
     """Set a model override for a skill."""
-    await get_service("model_router").set_skill_override(skill_id, body["model_id"])
-    return {"skill_id": skill_id, "model_id": body["model_id"]}
+    model_id = body.get("model_id")
+    if not model_id or not isinstance(model_id, str):
+        raise HTTPException(400, "model_id is required")
+    await get_service("model_router").set_skill_override(skill_id, model_id)
+    return {"skill_id": skill_id, "model_id": model_id}
 
 
 @router.get("/providers")
@@ -549,9 +556,15 @@ async def list_credentials(orchestrator=Depends(require_orchestrator)):
 @router.post("/credentials")
 async def store_credential(body: dict, orchestrator=Depends(require_orchestrator)):
     """Store a new credential."""
+    cred_id = body.get("id")
+    secret = body.get("secret")
+    if not cred_id or not isinstance(cred_id, str):
+        raise HTTPException(400, "id is required")
+    if not secret or not isinstance(secret, str):
+        raise HTTPException(400, "secret is required")
     await get_service("vault").store(
-        credential_id=body["id"],
-        secret=body["secret"],
+        credential_id=cred_id,
+        secret=secret,
         credential_type=body.get("type", "api_key"),
         service_name=body.get("service_name", ""),
         linked_permission=body.get("linked_permission"),
@@ -561,7 +574,7 @@ async def store_credential(body: dict, orchestrator=Depends(require_orchestrator
         await orchestrator.refresh_skill_registration()
     except Exception:
         pass
-    return {"status": "stored", "id": body["id"]}
+    return {"status": "stored", "id": cred_id}
 
 
 @router.delete("/credentials/{credential_id}")
