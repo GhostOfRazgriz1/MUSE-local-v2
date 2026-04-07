@@ -31,22 +31,32 @@ _KEYRING_SERVICE = "muse"
 _KEYRING_KEY = "__memory_encryption_key__"
 
 
+_cached_key: bytes | None = None
+
+
 def _get_or_create_key() -> bytes:
     """Return the 32-byte Fernet key, creating one on first use.
 
     The key is stored in the OS keyring so it persists across restarts
-    but is not visible in the database or on disk.
+    but is not visible in the database or on disk.  The result is cached
+    in-process to avoid repeated keyring lookups (100-500 ms on Windows).
     """
+    global _cached_key
+    if _cached_key is not None:
+        return _cached_key
+
     import keyring
 
     existing = keyring.get_password(_KEYRING_SERVICE, _KEYRING_KEY)
     if existing:
-        return existing.encode()
+        _cached_key = existing.encode()
+        return _cached_key
 
     key = Fernet.generate_key()
     keyring.set_password(_KEYRING_SERVICE, _KEYRING_KEY, key.decode())
     logger.info("Generated new memory encryption key (stored in OS keyring)")
-    return key
+    _cached_key = key
+    return _cached_key
 
 
 class MemoryEncryption:

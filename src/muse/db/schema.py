@@ -29,6 +29,10 @@ CREATE INDEX IF NOT EXISTS idx_memory_relevance ON memory_entries(relevance_scor
 CREATE INDEX IF NOT EXISTS idx_memory_accessed ON memory_entries(accessed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_superseded ON memory_entries(superseded_by);
 CREATE INDEX IF NOT EXISTS idx_memory_access_count ON memory_entries(access_count DESC) WHERE superseded_by IS NULL;
+-- Compound indexes for common query patterns
+CREATE INDEX IF NOT EXISTS idx_memory_ns_relevance ON memory_entries(namespace, relevance_score DESC) WHERE superseded_by IS NULL;
+CREATE INDEX IF NOT EXISTS idx_memory_ns_access ON memory_entries(namespace, access_count DESC) WHERE superseded_by IS NULL;
+CREATE INDEX IF NOT EXISTS idx_memory_superseded_ns ON memory_entries(superseded_by, namespace);
 
 -- Conversation archive: compressed conversation summaries
 CREATE TABLE IF NOT EXISTS conversation_archive (
@@ -231,7 +235,8 @@ CREATE TABLE IF NOT EXISTS wal_entries (
     operation TEXT NOT NULL,
     payload_json TEXT NOT NULL,
     committed INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    replayed_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_wal_uncommitted ON wal_entries(committed) WHERE committed = 0;
@@ -297,10 +302,18 @@ async def _run_migrations(db: aiosqlite.Connection) -> None:
     await db.commit()
 
 
-async def init_agent_db(db_path: str) -> aiosqlite.Connection:
-    db = await aiosqlite.connect(db_path)
+async def _apply_perf_pragmas(db: aiosqlite.Connection) -> None:
+    """Apply performance-tuned PRAGMAs for WAL-mode SQLite."""
     await db.execute("PRAGMA journal_mode=WAL")
     await db.execute("PRAGMA foreign_keys=ON")
+    await db.execute("PRAGMA synchronous=NORMAL")  # safe with WAL; faster writes
+    await db.execute("PRAGMA cache_size=-64000")    # 64 MB page cache (default ~2 MB)
+    await db.execute("PRAGMA temp_store=MEMORY")    # temp tables in RAM
+
+
+async def init_agent_db(db_path: str) -> aiosqlite.Connection:
+    db = await aiosqlite.connect(db_path)
+    await _apply_perf_pragmas(db)
     # Run migrations first so new columns exist before CREATE INDEX in the schema.
     await _run_migrations(db)
     await db.executescript(AGENT_DB_SCHEMA)
@@ -311,6 +324,12 @@ async def init_agent_db(db_path: str) -> aiosqlite.Connection:
 async def init_wal_db(db_path: str) -> aiosqlite.Connection:
     db = await aiosqlite.connect(db_path)
     await db.execute("PRAGMA journal_mode=WAL")
+    await db.execute("PRAGMA synchronous=NORMAL")
     await db.executescript(WAL_DB_SCHEMA)
+    # Migrate: add replayed_at column for existing databases
+    try:
+        await db.execute("ALTER TABLE wal_entries ADD COLUMN replayed_at TEXT")
+    except Exception:
+        pass  # column already exists
     await db.commit()
     return db

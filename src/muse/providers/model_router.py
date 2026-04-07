@@ -38,6 +38,8 @@ class ModelRouter:
         self._db = db
         self.default_model = default_model
         self._vision_model = vision_model
+        # In-memory cache for per-skill model overrides (populated lazily).
+        self._override_cache: dict[str, str] | None = None
 
     # ------------------------------------------------------------------
     # Model resolution
@@ -70,13 +72,11 @@ class ModelRouter:
                 return capable
 
         if skill_id:
-            row = await self._db.execute(
-                "SELECT model_id FROM model_overrides WHERE skill_id = ?",
-                (skill_id,),
-            )
-            result = await row.fetchone()
-            if result:
-                return result[0]
+            if self._override_cache is None:
+                await self._load_override_cache()
+            override = self._override_cache.get(skill_id)  # type: ignore[union-attr]
+            if override:
+                return override
 
         return self.default_model
 
@@ -110,6 +110,12 @@ class ModelRouter:
 
         return None
 
+    async def _load_override_cache(self) -> None:
+        """Populate the override cache from the DB (once)."""
+        cursor = await self._db.execute("SELECT skill_id, model_id FROM model_overrides")
+        rows = await cursor.fetchall()
+        self._override_cache = {row[0]: row[1] for row in rows}
+
     # ------------------------------------------------------------------
     # Per-skill overrides
     # ------------------------------------------------------------------
@@ -128,6 +134,9 @@ class ModelRouter:
             (skill_id, model_id, now),
         )
         await self._db.commit()
+        # Invalidate cache
+        if self._override_cache is not None:
+            self._override_cache[skill_id] = model_id
         logger.info("Set model override for skill %s -> %s", skill_id, model_id)
 
     async def remove_skill_override(self, skill_id: str) -> None:
@@ -137,6 +146,9 @@ class ModelRouter:
             (skill_id,),
         )
         await self._db.commit()
+        # Invalidate cache
+        if self._override_cache is not None:
+            self._override_cache.pop(skill_id, None)
         logger.info("Removed model override for skill %s", skill_id)
 
     async def get_skill_overrides(self) -> dict[str, str]:

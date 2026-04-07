@@ -110,6 +110,13 @@ class MemoryRepository:
             row = await cursor.fetchone()
             return row[0] if row else 0
 
+    async def count_by_namespace(self, namespace: str) -> int:
+        """Return the number of entries in a namespace (no row data fetched)."""
+        sql = "SELECT COUNT(*) FROM memory_entries WHERE namespace = ?"
+        async with self._db.execute(sql, (namespace,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
     async def get_by_relevance(
         self,
         namespace: str,
@@ -211,7 +218,7 @@ class MemoryRepository:
             + " FROM memory_entries"
             + " WHERE namespace = ? AND superseded_by IS NULL"
             + " AND embedding IS NOT NULL"
-            + " LIMIT 1000"
+            + " LIMIT 200"
         )
         params: tuple = (namespace,)
 

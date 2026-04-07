@@ -57,6 +57,15 @@ function App() {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const notifications = useNotifications();
 
+  // Pause CSS animations when the tab is hidden to save CPU/GPU.
+  useEffect(() => {
+    const onVisibility = () => {
+      document.body.classList.toggle("tab-hidden", document.hidden);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
   // Fire desktop notifications for important events when tab is hidden
   useEffect(() => {
     const last = events[events.length - 1];

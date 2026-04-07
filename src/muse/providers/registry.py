@@ -12,6 +12,7 @@ the *fallback* provider (typically OpenRouter, which natively accepts the same
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -88,28 +89,35 @@ class ProviderRegistry:
     async def list_models(self) -> list[ModelInfo]:
         all_models: list[ModelInfo] = []
 
-        # Direct providers — prefix model IDs so they're globally unique.
-        for prefix, provider in self._providers.items():
+        # Query all direct providers in parallel.
+        async def _fetch(prefix: str, provider: Any) -> list[ModelInfo]:
             try:
                 models = await provider.list_models()
-                for m in models:
-                    all_models.append(
-                        ModelInfo(
-                            id=f"{prefix}/{m.id}",
-                            name=m.name,
-                            context_window=m.context_window,
-                            input_price_per_token=m.input_price_per_token,
-                            output_price_per_token=m.output_price_per_token,
-                            capabilities=m.capabilities,
-                        )
+                return [
+                    ModelInfo(
+                        id=f"{prefix}/{m.id}",
+                        name=m.name,
+                        context_window=m.context_window,
+                        input_price_per_token=m.input_price_per_token,
+                        output_price_per_token=m.output_price_per_token,
+                        capabilities=m.capabilities,
                     )
+                    for m in models
+                ]
             except Exception:
                 logger.warning("Failed to list models from %s", prefix, exc_info=True)
+                return []
+
+        results = await asyncio.gather(*[
+            _fetch(prefix, provider)
+            for prefix, provider in self._providers.items()
+        ])
+        for batch in results:
+            all_models.extend(batch)
 
         # Fallback provider (e.g. OpenRouter) — IDs are already fully-qualified.
         if self._fallback is not None:
             try:
-                # Exclude models that duplicate a direct-provider entry.
                 direct_ids = {m.id for m in all_models}
                 for m in await self._fallback.list_models():
                     if m.id not in direct_ids:

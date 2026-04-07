@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { IconX, IconClock } from "./Icons";
 import { apiFetch } from "../hooks/useApiToken";
 import { useLocale } from "../i18n";
@@ -77,7 +77,10 @@ export const TaskTray: React.FC<TaskTrayProps> = ({ events }) => {
   }, [events]);
 
   // Only tick elapsed timer when at least one task is running.
-  const hasRunning = Array.from(tasks.values()).some((t) => t.status === "running");
+  const hasRunning = useMemo(
+    () => Array.from(tasks.values()).some((t) => t.status === "running"),
+    [tasks],
+  );
 
   useEffect(() => {
     if (!hasRunning) return;

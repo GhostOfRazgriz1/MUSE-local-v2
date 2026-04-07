@@ -19,21 +19,19 @@ async def list_skills(orchestrator=Depends(require_orchestrator)):
 
     installed = await get_service("skill_loader").get_installed()
 
-    # Enrich each skill with active permission grants
+    # Batch-fetch active grants for all skills in one query
+    skill_ids = [s["skill_id"] for s in installed]
+    grants_by_skill: dict[str, list[dict]] = {}
+    try:
+        grants_by_skill = await get_service("permissions").permission_repo.get_active_grants_batch(skill_ids)
+    except Exception as e:
+        logger.debug("Failed to batch-fetch grants: %s", e)
+
     skills = []
     for skill_data in installed:
         skill_id = skill_data["skill_id"]
         manifest = skill_data.get("manifest", {})
-
-        # Collect active grants for this skill
-        granted_perms: list[str] = []
-        try:
-            grants = await get_service("permissions").permission_repo.get_active_grants(
-                skill_id,
-            )
-            granted_perms = [g["permission"] for g in grants]
-        except Exception as e:
-            logger.debug("Failed to fetch grants for skill %s: %s", skill_id, e)
+        granted_perms = [g["permission"] for g in grants_by_skill.get(skill_id, [])]
 
         skills.append({
             "skill_id": skill_id,

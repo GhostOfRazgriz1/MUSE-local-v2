@@ -47,7 +47,7 @@ function stripToolBlocks(text: string): string {
 }
 
 /** Copy-to-clipboard button with visual feedback. */
-const CopyButton: React.FC<{ text: string; className?: string; label?: string }> = ({
+const CopyButton = React.memo<{ text: string; className?: string; label?: string }>(({
   text,
   className = "copy-btn",
   label = "Copy",
@@ -73,7 +73,7 @@ const CopyButton: React.FC<{ text: string; className?: string; label?: string }>
       {copied ? <IconClipboardCheck size={14} /> : <IconCopy size={14} />}
     </button>
   );
-};
+});
 
 /** Detect file-write responses from the Files skill. */
 const FILE_WRITE_RE = /^(Created|Overwrote) \*\*(.+?)\*\* \((.+?)\)\n\n {2}(.+?)\n\n```\n([\s\S]*?)(?:\n```|$)/;

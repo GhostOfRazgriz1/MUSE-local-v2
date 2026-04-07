@@ -6311,3 +6311,11 @@ textarea:focus-visible {
 .settings-notification-status.denied {
   color: var(--text-muted);
 }
+
+/* ── Performance: pause animations when tab is hidden ── */
+.tab-hidden *,
+.tab-hidden *::before,
+.tab-hidden *::after {
+  animation-play-state: paused !important;
+  transition: none !important;
+}

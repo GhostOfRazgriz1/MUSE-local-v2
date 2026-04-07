@@ -160,6 +160,30 @@ class PermissionRepository:
         rows = await cursor.fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    async def get_active_grants_batch(self, skill_ids: list[str]) -> dict[str, list[dict]]:
+        """Return active grants for multiple skills in a single query.
+
+        Returns ``{skill_id: [grant, ...]}`` for all requested skills.
+        """
+        if not skill_ids:
+            return {}
+        placeholders = ",".join("?" for _ in skill_ids)
+        cursor = await self.db.execute(
+            f"""
+            SELECT id, skill_id, permission, risk_tier, approval_mode,
+                   granted_at, revoked_at, granted_by, session_id
+              FROM permission_grants
+             WHERE skill_id IN ({placeholders}) AND revoked_at IS NULL
+            """,
+            tuple(skill_ids),
+        )
+        rows = await cursor.fetchall()
+        result: dict[str, list[dict]] = {sid: [] for sid in skill_ids}
+        for row in rows:
+            grant = self._row_to_dict(row)
+            result[grant["skill_id"]].append(grant)
+        return result
+
     async def get_all_grants(self) -> list[dict]:
         """Return every active grant (for admin dashboard)."""
         cursor = await self.db.execute(

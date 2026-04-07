@@ -11,7 +11,7 @@ const _wsProto = _loc.protocol === "https:" ? "wss:" : "ws:";
 const WS_BASE = `${_wsProto}//${_loc.host}/api/ws/chat`;
 const MAX_BACKOFF = 30000;
 const INITIAL_BACKOFF = 1000;
-const MAX_EVENTS = 500;
+const MAX_EVENTS = 250;
 
 /** Event types that create pending user interactions. */
 const INTERACTION_START_TYPES = new Set(["permission_request", "skill_question", "skill_confirm"]);
@@ -115,89 +115,86 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
 
       ws.onmessage = (event) => {
         if (!mountedRef.current) return;
+        let parsed: ChatEvent;
+        try {
+          parsed = JSON.parse(event.data);
+        } catch {
+          return; // ignore malformed messages
+        }
         // Drop events from a stale session — prevents cross-session leakage
         // when the user switches sessions while a response is in flight.
         if (connGeneration !== generationRef.current) {
           // But intercept completion events and surface as notifications
           // so the user knows the background session finished.
-          try {
-            const stale: ChatEvent = JSON.parse(event.data);
-            if (connSessionId && (
-              stale.type === "response" ||
-              stale.type === "task_completed" ||
-              stale.type === "multi_task_completed" ||
-              stale.type === "error"
-            )) {
-              const summary = stale.type === "response"
-                ? (stale.content || "").slice(0, 80)
-                : stale.type === "error"
-                  ? "Task failed"
-                  : "Task completed";
-              setBackgroundNotifications((prev) => {
-                // Don't duplicate for same session
-                if (prev.some((n) => n.sessionId === connSessionId)) return prev;
-                return [...prev, { sessionId: connSessionId, summary, timestamp: Date.now() }];
-              });
-            }
-          } catch { /* ignore parse errors on stale events */ }
+          if (connSessionId && (
+            parsed.type === "response" ||
+            parsed.type === "task_completed" ||
+            parsed.type === "multi_task_completed" ||
+            parsed.type === "error"
+          )) {
+            const summary = parsed.type === "response"
+              ? (parsed.content || "").slice(0, 80)
+              : parsed.type === "error"
+                ? "Task failed"
+                : "Task completed";
+            setBackgroundNotifications((prev) => {
+              // Don't duplicate for same session
+              if (prev.some((n) => n.sessionId === connSessionId)) return prev;
+              return [...prev, { sessionId: connSessionId, summary, timestamp: Date.now() }];
+            });
+          }
           return;
         }
-        try {
-          const parsed: ChatEvent = JSON.parse(event.data);
-
-          // Intercept session-level events
-          if (parsed.type === "session_started") {
-            setSessionId(parsed.session_id);
-            return;
-          }
-          if (parsed.type === "history") {
-            const msgs = (parsed as any).messages || [];
-            // Convert persisted messages into DisplayMessage[]
-            const restored: DisplayMessage[] = msgs.map(
-              (m: HistoryMessage) => {
-                if (m.role === "user") {
-                  return { role: "user" as const, content: m.content, _id: m.id, _dbId: m.id, _createdAt: m.created_at };
-                }
-                // Assistant messages — reconstruct as a response event
-                const meta = m.metadata || {};
-                return {
-                  type: "response" as const,
-                  content: m.content,
-                  tokens_in: (meta.tokens_in as number) || 0,
-                  tokens_out: (meta.tokens_out as number) || 0,
-                  cost_usd: (meta.cost_usd as number) || 0,
-                  model: (meta.model as string) || "",
-                  _dbId: m.id,
-                  _createdAt: m.created_at,
-                };
-              }
-            );
-            setHistoryMessages(restored);
-            // Clear events so previously-accumulated events don't overlap
-            // with the history that was just loaded.
-            setEvents([]);
-            return;
-          }
-          // Track pending interactive events
-          if (INTERACTION_START_TYPES.has(parsed.type) && "request_id" in parsed) {
-            pendingRef.current = new Set(pendingRef.current).add(parsed.request_id);
-            setPendingInteractions(pendingRef.current);
-          } else if (INTERACTION_END_TYPES.has(parsed.type) && "request_id" in parsed) {
-            const next = new Set(pendingRef.current);
-            next.delete(parsed.request_id);
-            pendingRef.current = next;
-            setPendingInteractions(next);
-          }
-
-          setEvents((prev) => {
-            const next = [...prev, parsed];
-            return next.length > MAX_EVENTS
-              ? structuralCompactEvents(next, pendingRef.current)
-              : next;
-          });
-        } catch {
-          // Ignore malformed messages
+        // Intercept session-level events
+        if (parsed.type === "session_started") {
+          setSessionId(parsed.session_id);
+          return;
         }
+        if (parsed.type === "history") {
+          const msgs = (parsed as any).messages || [];
+          // Convert persisted messages into DisplayMessage[]
+          const restored: DisplayMessage[] = msgs.map(
+            (m: HistoryMessage) => {
+              if (m.role === "user") {
+                return { role: "user" as const, content: m.content, _id: m.id, _dbId: m.id, _createdAt: m.created_at };
+              }
+              // Assistant messages — reconstruct as a response event
+              const meta = m.metadata || {};
+              return {
+                type: "response" as const,
+                content: m.content,
+                tokens_in: (meta.tokens_in as number) || 0,
+                tokens_out: (meta.tokens_out as number) || 0,
+                cost_usd: (meta.cost_usd as number) || 0,
+                model: (meta.model as string) || "",
+                _dbId: m.id,
+                _createdAt: m.created_at,
+              };
+            }
+          );
+          setHistoryMessages(restored);
+          // Clear events so previously-accumulated events don't overlap
+          // with the history that was just loaded.
+          setEvents([]);
+          return;
+        }
+        // Track pending interactive events
+        if (INTERACTION_START_TYPES.has(parsed.type) && "request_id" in parsed) {
+          pendingRef.current = new Set(pendingRef.current).add(parsed.request_id);
+          setPendingInteractions(pendingRef.current);
+        } else if (INTERACTION_END_TYPES.has(parsed.type) && "request_id" in parsed) {
+          const next = new Set(pendingRef.current);
+          next.delete(parsed.request_id);
+          pendingRef.current = next;
+          setPendingInteractions(next);
+        }
+
+        setEvents((prev) => {
+          const next = [...prev, parsed];
+          return next.length > MAX_EVENTS
+            ? structuralCompactEvents(next, pendingRef.current)
+            : next;
+        });
       };
 
       ws.onclose = () => {

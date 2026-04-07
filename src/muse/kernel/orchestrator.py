@@ -1481,11 +1481,15 @@ class Kernel:
         # Note: _execute_sub_task also enforces permissions as a safety net,
         # but this early check avoids spawning a task just to block it.
         if not skip_permission_check:
-            missing_perms = []
-            for perm in manifest.permissions:
-                check = await self._permissions.check_permission(skill_id, perm)
-                if not check.allowed and check.requires_user_approval:
-                    missing_perms.append(perm)
+            import asyncio as _aio
+            checks = await _aio.gather(*[
+                self._permissions.check_permission(skill_id, perm)
+                for perm in manifest.permissions
+            ])
+            missing_perms = [
+                perm for perm, check in zip(manifest.permissions, checks)
+                if not check.allowed and check.requires_user_approval
+            ]
         else:
             missing_perms = []
 
