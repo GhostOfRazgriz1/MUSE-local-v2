@@ -122,6 +122,14 @@ class ModelRouter:
 
     async def set_skill_override(self, skill_id: str, model_id: str) -> None:
         """Create or update a per-skill model override."""
+        if not _VALID_MODEL_ID.match(model_id):
+            raise ValueError(f"Invalid model ID: {model_id!r}")
+        if "/" not in model_id:
+            logger.warning(
+                "Model override '%s' has no provider prefix (expected 'provider/model'). "
+                "It will be routed to the fallback provider.",
+                model_id,
+            )
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute(

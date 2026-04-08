@@ -23,6 +23,7 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 _ALLOWED_KEY_PREFIXES = (
     "workspace.",
     "proactivity.",
+    "recipe.",
     "default_model",
     "daily_budget",
     "autonomy_level",
@@ -304,7 +305,7 @@ async def list_models(orchestrator=Depends(require_orchestrator)):
                 "id": m.id,
                 "name": m.name,
                 "provider": prefix,
-                "served_by": "local",
+                "served_by": prefix,
                 "context_window": m.context_window,
                 "input_price": m.input_price_per_token,
                 "output_price": m.output_price_per_token,

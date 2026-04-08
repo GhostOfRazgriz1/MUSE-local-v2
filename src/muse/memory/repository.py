@@ -301,6 +301,7 @@ class MemoryRepository:
         if precomputed_embedding is not None:
             embedding_blob = _embedding_to_blob(precomputed_embedding)
         elif value_type == "text" and value:
+            vec = await self._emb.embed_async(value)
             embedding_blob = _embedding_to_blob(vec)
 
         sql = (
