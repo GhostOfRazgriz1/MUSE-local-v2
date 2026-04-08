@@ -485,6 +485,9 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
           evt.type === "plan_rewritten" ||
           evt.type === "task_blocked" ||
           evt.type === "steering_ignored" ||
+          evt.type === "iteration_retry" ||
+          evt.type === "iteration_exhausted" ||
+          evt.type === "iteration_succeeded" ||
           evt.type === "reminder" ||
           evt.type === "suggestion" ||
           evt.type === "autonomous_action"
@@ -1119,6 +1122,32 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                     <div className="task-notification started steering">
                       <IconNavigation size={13} />
                       &nbsp;Plan revised
+                    </div>
+                  );
+
+                case "iteration_retry":
+                  return wrapMsg(
+                    <div className="task-notification started" style={{ borderLeft: "3px solid #f59e0b" }}>
+                      <IconRefresh size={13} />
+                      &nbsp;Retrying (attempt {evt.attempt}/{evt.max_attempts}) &mdash;{" "}
+                      {evt.error.length > 80 ? evt.error.slice(0, 80) + "…" : evt.error}
+                    </div>
+                  );
+
+                case "iteration_exhausted":
+                  return wrapMsg(
+                    <div className="task-notification failed">
+                      <IconAlertCircle size={13} />
+                      &nbsp;Gave up after {evt.attempts} attempts &mdash;{" "}
+                      {evt.last_error.length > 80 ? evt.last_error.slice(0, 80) + "…" : evt.last_error}
+                    </div>
+                  );
+
+                case "iteration_succeeded":
+                  return wrapMsg(
+                    <div className="task-notification completed">
+                      <IconCheck size={13} />
+                      &nbsp;Passed on attempt {evt.attempts}
                     </div>
                   );
 

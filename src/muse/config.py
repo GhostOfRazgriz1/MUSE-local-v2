@@ -68,6 +68,7 @@ class AutonomousConfig:
     """Settings for autonomous retry loops (skill authoring, strategy adjustment, etc.)."""
     max_attempts: int = 5
     default_token_budget: int = 50_000
+    goal_iteration_max_attempts: int = 3  # per-group retry cap in goal mode
 
 
 @dataclass(frozen=True)
@@ -144,7 +145,7 @@ class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     default_model: str = "anthropic/claude-sonnet-4"
     vision_model: str | None = None  # e.g. "local/gemma4:27b" — None = auto-detect
-    debug: bool = False
+    debug: bool = True
 
     @property
     def identity_path(self) -> Path:

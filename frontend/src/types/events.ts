@@ -107,6 +107,26 @@ export type ChatEvent =
       details: string;
     }
   | { type: "screen_error"; content: string }
+  | {
+      type: "iteration_retry";
+      group_id: string;
+      attempt: number;
+      max_attempts: number;
+      error: string;
+      work_steps: number[];
+      verify_step: number;
+    }
+  | {
+      type: "iteration_exhausted";
+      group_id: string;
+      attempts: number;
+      last_error: string;
+    }
+  | {
+      type: "iteration_succeeded";
+      group_id: string;
+      attempts: number;
+    }
   | { type: "session_working"; session_id: string }
   | { type: "session_idle"; session_id: string }
   | { type: "permission_approved"; request_id: string }

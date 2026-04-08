@@ -31,6 +31,7 @@ from muse.kernel.identity_editor import (
     SKILL_DESCRIPTION as IDENTITY_SKILL_DESCRIPTION,
 )
 from muse.kernel.intent_classifier import SemanticIntentClassifier, ExecutionMode, SubTask
+from muse.kernel.iteration import IterationGroupState, parse_iteration_groups
 from muse.kernel.dreaming import DreamingManager
 from muse.kernel.onboarding import OnboardingFlow
 from muse.kernel.patterns import PatternTracker
@@ -318,6 +319,11 @@ class Kernel:
         self._scheduler = Scheduler(db, self)
         self._registry.register("scheduler", self._scheduler)
 
+        # Recipe-based proactivity engine
+        from muse.kernel.recipes import RecipeEngine
+        self._recipe_engine = RecipeEngine(self._registry)
+        self._registry.register("recipe_engine", self._recipe_engine)
+
         # Classifier will be registered after startup (needs skill catalog)
         # self._registry.register("classifier", self._classifier) — done in start()
 
@@ -571,6 +577,9 @@ class Kernel:
         # Start proactive behavior loops
         self._proactivity.start()
 
+        # Start recipe-based proactivity engine
+        await self._recipe_engine.start()
+
         # Start MCP connections and register tools
         if self._mcp_manager:
             self._mcp_manager._on_tools_changed = self._register_mcp_tools
@@ -722,6 +731,7 @@ class Kernel:
         self._dreaming.stop()
         self._scheduler.stop()
         self._proactivity.stop()
+        self._recipe_engine.stop()
         if self._mcp_manager:
             await self._mcp_manager.shutdown()
         await self._demotion.flush_cache_to_disk()
@@ -985,7 +995,10 @@ class Kernel:
                     "Output a revised JSON array of ALL steps (completed + remaining).\n"
                     "Completed steps MUST be preserved exactly as-is (same skill_id, "
                     "instruction, depends_on). Only rewrite, add, or remove steps "
-                    "after the current step.\n\n"
+                    "after the current step.\n"
+                    "If steps have iteration_group and iteration_role fields, "
+                    "preserve them unless the user's steering explicitly changes "
+                    "the approach.\n\n"
                     "Rules:\n"
                     "- Maximum 8 total steps\n"
                     "- depends_on indices reference the full array\n"
@@ -1040,6 +1053,9 @@ class Kernel:
 
         # Reset proactivity session state for the new connection
         self._proactivity.reset_session()
+
+        # Notify recipe engine of session connect
+        asyncio.create_task(self._recipe_engine.on_session_connect())
 
         # ── Instant static placeholder ────────────────────────
         agent_name = self._parse_identity_field("name") or "MUSE"
@@ -1204,6 +1220,10 @@ class Kernel:
             signal = self._emotions.analyze_message(user_message)
             if signal:
                 asyncio.create_task(self._emotions.persist_signal(signal))
+                # Notify recipe engine of emotional change
+                asyncio.create_task(self._recipe_engine.on_emotion_change(
+                    signal.valence, signal.emotion,
+                ))
                 # Map user emotion → agent mood
                 _EMOTION_TO_MOOD = {
                     "excitement": "excited", "accomplishment": "excited",
@@ -1969,8 +1989,22 @@ class Kernel:
                     '  "skill_id": skill to use,\n'
                     '  "action": specific action within the skill (or null),\n'
                     '  "instruction": what to tell the skill,\n'
-                    '  "depends_on": [indices of prior steps this needs]\n'
+                    '  "depends_on": [indices of prior steps this needs],\n'
+                    '  "iteration_group": optional group name for retry loops (or null),\n'
+                    '  "iteration_role": "work" or "verify" (only if iteration_group is set)\n'
                     "}\n\n"
+                    "Iteration groups (optional):\n"
+                    "- When a task involves creating something and then testing or "
+                    "verifying it, mark the creation step as iteration_role=\"work\" "
+                    "and the test/verification step as iteration_role=\"verify\" with "
+                    "the same iteration_group name.\n"
+                    "- If the verify step fails, the agent automatically retries the "
+                    "work step with error feedback, then re-runs verification.\n"
+                    "- Use for: write code + run tests, generate config + validate, "
+                    "draft text + review against criteria.\n"
+                    "- The verify step MUST depend_on the work step(s).\n"
+                    "- Only use iteration groups when the goal implies iterating "
+                    "until something works. Simple sequential tasks do NOT need it.\n\n"
                     f"Rules:\n"
                     f"- Maximum {self.MAX_PLAN_STEPS} steps\n"
                     f"- Each step should be a single skill invocation\n"
@@ -1984,7 +2018,7 @@ class Kernel:
                 )},
                 {"role": "user", "content": user_message},
             ],
-            max_tokens=800,
+            max_tokens=1000,
         )
 
         import re
@@ -2089,10 +2123,16 @@ class Kernel:
                     instruction=s.get("instruction", ""),
                     action=s.get("action"),
                     depends_on=deps,
+                    iteration_group=s.get("iteration_group"),
+                    iteration_role=s.get("iteration_role"),
                 ))
             return st_list
 
         sub_tasks = _build_sub_tasks(steps)
+        iteration_groups = parse_iteration_groups(
+            sub_tasks,
+            max_attempts=self._config.autonomous.goal_iteration_max_attempts,
+        )
         results: dict[int, dict] = {}
         executed_steps: set[int] = set()
         self._executing_plan = True
@@ -2134,14 +2174,35 @@ class Kernel:
                             wave_tasks.append((idx, st, pipe_ctx))
 
                     for idx, st, pipe_ctx in wave_tasks:
+                        # ── Iteration: inject feedback for retrying work steps ──
+                        from muse.kernel.iteration import (
+                            find_group_for_work_step,
+                            find_group_for_verify_step,
+                            build_retry_instruction,
+                            build_iteration_pipeline_context,
+                        )
+                        work_group = find_group_for_work_step(idx, iteration_groups)
+                        if work_group:
+                            pipe_ctx.update(build_iteration_pipeline_context(work_group))
+
+                        effective_instruction = st.instruction
+                        if work_group:
+                            effective_instruction = build_retry_instruction(
+                                st.instruction, work_group,
+                            )
+
+                        attempt_label = ""
+                        if work_group and work_group.attempt > 0:
+                            attempt_label = f" (attempt {work_group.attempt + 1}/{work_group.max_attempts + 1})"
+
                         yield {
                             "type": "status",
-                            "content": f"Step {idx + 1}/{len(steps)}: {st.skill_id} — {st.instruction[:60]}",
+                            "content": f"Step {idx + 1}/{len(steps)}: {st.skill_id} — {st.instruction[:60]}{attempt_label}",
                         }
 
                         async for event in self._execute_sub_task(
                             skill_id=st.skill_id,
-                            instruction=st.instruction,
+                            instruction=effective_instruction,
                             intent=intent,
                             action=st.action,
                             pipeline_context=pipe_ctx,
@@ -2174,17 +2235,116 @@ class Kernel:
 
                         executed_steps.add(idx)
 
-                        # Persist progress
+                        # ── Iteration: check for verify success after retry ──
+                        verify_group = find_group_for_verify_step(idx, iteration_groups)
+                        if (verify_group
+                                and verify_group.attempt > 0
+                                and results.get(idx, {}).get("status") == "completed"):
+                            verify_group.succeeded = True
+                            yield {
+                                "type": "iteration_succeeded",
+                                "group_id": verify_group.group_id,
+                                "attempts": verify_group.attempt + 1,
+                            }
+
+                        # Persist progress (include iteration state)
+                        persist_results = dict(results)
+                        if iteration_groups:
+                            persist_results["_iteration_groups"] = {
+                                gid: g.to_dict()
+                                for gid, g in iteration_groups.items()
+                            }
                         await self._db.execute(
                             """UPDATE plans SET results_json = ?, current_step = ?,
                                updated_at = ? WHERE id = ?""",
-                            (json.dumps(results, default=str), idx + 1,
+                            (json.dumps(persist_results, default=str), idx + 1,
                              datetime.now(timezone.utc).isoformat(), plan_id),
                         )
                         await self._db.commit()
 
-                        # If step failed, pause the plan
+                        # ── If step failed: check iteration before pausing ──
                         if results.get(idx, {}).get("status") == "failed":
+                            iter_group = find_group_for_verify_step(idx, iteration_groups)
+
+                            if iter_group and iter_group.can_retry():
+                                # Record failure and prepare retry
+                                error_text = results[idx].get("error", "unknown error")
+                                iter_group.record_failure(error_text)
+
+                                # Regression detection
+                                if (iter_group.attempt >= 2
+                                        and len(iter_group.feedback_history._attempts) >= 2):
+                                    prev = iter_group.feedback_history._attempts[-2]["issues"]
+                                    curr = iter_group.feedback_history._attempts[-1]["issues"]
+                                    if prev == curr:
+                                        yield {
+                                            "type": "status",
+                                            "content": (
+                                                f"Warning: identical error on attempts "
+                                                f"{iter_group.attempt - 1} and {iter_group.attempt}. "
+                                                f"The fix may not be converging."
+                                            ),
+                                        }
+
+                                yield {
+                                    "type": "iteration_retry",
+                                    "group_id": iter_group.group_id,
+                                    "attempt": iter_group.attempt,
+                                    "max_attempts": iter_group.max_attempts,
+                                    "error": error_text,
+                                    "work_steps": iter_group.work_step_indices,
+                                    "verify_step": iter_group.verify_step_index,
+                                }
+
+                                # Check steering before retrying
+                                new_steps = await self._check_and_apply_steering(
+                                    steps, results, len(executed_steps), user_message,
+                                )
+                                if new_steps is not None:
+                                    steps = new_steps
+                                    sub_tasks = _build_sub_tasks(steps)
+                                    iteration_groups = parse_iteration_groups(
+                                        sub_tasks,
+                                        max_attempts=self._config.autonomous.goal_iteration_max_attempts,
+                                    )
+                                    await self._db.execute(
+                                        "UPDATE plans SET steps_json = ?, updated_at = ? WHERE id = ?",
+                                        (json.dumps(steps), datetime.now(timezone.utc).isoformat(), plan_id),
+                                    )
+                                    await self._db.commit()
+                                    plan_display = "\n".join(
+                                        f"  {i+1}. **{s.get('skill_id', '?')}** — {s.get('instruction', '')[:60]}"
+                                        for i, s in enumerate(steps)
+                                    )
+                                    yield {
+                                        "type": "plan_rewritten",
+                                        "content": f"Plan revised:\n\n{plan_display}",
+                                        "steps": steps,
+                                    }
+                                    replan_loop = True
+                                    break
+
+                                # Clear work + verify steps for re-execution
+                                for work_idx in iter_group.work_step_indices:
+                                    executed_steps.discard(work_idx)
+                                    results.pop(work_idx, None)
+                                executed_steps.discard(idx)
+                                results.pop(idx, None)
+
+                                replan_loop = True
+                                break  # restart wave loop for retry
+
+                            elif iter_group and not iter_group.can_retry():
+                                # Exhausted retries
+                                yield {
+                                    "type": "iteration_exhausted",
+                                    "group_id": iter_group.group_id,
+                                    "attempts": iter_group.attempt,
+                                    "last_error": iter_group.last_verify_error,
+                                }
+                                # Fall through to pause logic below
+
+                            # No iteration group or exhausted — pause as before
                             await self._db.execute(
                                 "UPDATE plans SET status = 'paused', updated_at = ? WHERE id = ?",
                                 (datetime.now(timezone.utc).isoformat(), plan_id),
@@ -2212,6 +2372,10 @@ class Kernel:
                         if new_steps is not None:
                             steps = new_steps
                             sub_tasks = _build_sub_tasks(steps)
+                            iteration_groups = parse_iteration_groups(
+                                sub_tasks,
+                                max_attempts=self._config.autonomous.goal_iteration_max_attempts,
+                            )
                             # Persist updated plan
                             await self._db.execute(
                                 "UPDATE plans SET steps_json = ?, updated_at = ? WHERE id = ?",
@@ -2294,6 +2458,8 @@ class Kernel:
         plan_id, goal, steps_json, results_json, current_step = row
         steps = json.loads(steps_json)
         results = json.loads(results_json)
+        # Extract iteration group state before int-key conversion
+        persisted_iter_groups = results.pop("_iteration_groups", {})
         # Convert string keys back to int
         results = {int(k): v for k, v in results.items()}
 
@@ -2358,7 +2524,23 @@ class Kernel:
                 instruction=s.get("instruction", ""),
                 action=s.get("action"),
                 depends_on=deps,
+                iteration_group=s.get("iteration_group"),
+                iteration_role=s.get("iteration_role"),
             ))
+
+        # Rehydrate iteration groups from persisted state
+        iteration_groups = parse_iteration_groups(
+            sub_tasks,
+            max_attempts=self._config.autonomous.goal_iteration_max_attempts,
+        )
+        if persisted_iter_groups:
+            for gid, data in persisted_iter_groups.items():
+                if gid in iteration_groups:
+                    iteration_groups[gid] = IterationGroupState.from_dict(
+                        gid, data,
+                        iteration_groups[gid].work_step_indices,
+                        iteration_groups[gid].verify_step_index,
+                    )
 
         from muse.kernel.intent_classifier import ClassifiedIntent, ExecutionMode
         intent = ClassifiedIntent(
@@ -2366,64 +2548,141 @@ class Kernel:
             task_description=goal,
         )
 
-        # Execute remaining steps
-        for idx in range(current_step, len(sub_tasks)):
-            st = sub_tasks[idx]
-            if idx in results and results[idx].get("status") == "completed":
-                continue  # already done
+        # Execute remaining steps (with iteration support)
+        from muse.kernel.iteration import (
+            find_group_for_work_step,
+            find_group_for_verify_step,
+            build_retry_instruction,
+            build_iteration_pipeline_context,
+        )
 
-            # Build pipeline context from prior results
-            pipe_ctx: dict = {}
-            skip = False
-            for dep_idx in st.depends_on:
-                dep = results.get(dep_idx)
-                if dep is None or dep.get("status") == "failed":
-                    results[idx] = {"status": "skipped"}
-                    skip = True
-                    break
-                pipe_ctx[f"task_{dep_idx}_result"] = dep.get("summary", "")
-            if skip:
-                continue
+        executed_resume: set[int] = set(
+            idx for idx in results if results[idx].get("status") == "completed"
+        )
+        resume_loop = True
+        while resume_loop:
+            resume_loop = False
+            for idx in range(len(sub_tasks)):
+                st = sub_tasks[idx]
+                if idx in executed_resume:
+                    continue
 
-            yield {
-                "type": "status",
-                "content": f"Step {idx + 1}/{len(steps)}: {st.skill_id} — {st.instruction[:60]}",
-            }
+                # Build pipeline context from prior results
+                pipe_ctx: dict = {}
+                skip = False
+                for dep_idx in st.depends_on:
+                    dep = results.get(dep_idx)
+                    if dep is None or dep.get("status") == "failed":
+                        results[idx] = {"status": "skipped"}
+                        executed_resume.add(idx)
+                        skip = True
+                        break
+                    pipe_ctx[f"task_{dep_idx}_result"] = dep.get("summary", "")
+                if skip:
+                    continue
 
-            async for event in self._execute_sub_task(
-                skill_id=st.skill_id,
-                instruction=st.instruction,
-                intent=intent,
-                action=st.action,
-                pipeline_context=pipe_ctx,
-                record_history=False,
-                session_id=self._session_id,
-            ):
-                if event.get("type") == "response":
-                    results[idx] = {"status": "completed", "summary": event.get("content", "")}
-                elif event.get("type") in ("task_failed", "error"):
-                    results[idx] = {"status": "failed", "error": event.get("error", event.get("content", ""))}
-                yield event
+                # Iteration: inject feedback for retrying work steps
+                work_group = find_group_for_work_step(idx, iteration_groups)
+                if work_group:
+                    pipe_ctx.update(build_iteration_pipeline_context(work_group))
 
-            # Persist after each step
-            await self._db.execute(
-                "UPDATE plans SET results_json = ?, current_step = ?, updated_at = ? WHERE id = ?",
-                (json.dumps(results, default=str), idx + 1,
-                 datetime.now(timezone.utc).isoformat(), plan_id),
-            )
-            await self._db.commit()
+                effective_instruction = st.instruction
+                if work_group:
+                    effective_instruction = build_retry_instruction(
+                        st.instruction, work_group,
+                    )
 
-            if results.get(idx, {}).get("status") == "failed":
+                yield {
+                    "type": "status",
+                    "content": f"Step {idx + 1}/{len(steps)}: {st.skill_id} — {st.instruction[:60]}",
+                }
+
+                async for event in self._execute_sub_task(
+                    skill_id=st.skill_id,
+                    instruction=effective_instruction,
+                    intent=intent,
+                    action=st.action,
+                    pipeline_context=pipe_ctx,
+                    record_history=False,
+                    session_id=self._session_id,
+                ):
+                    if event.get("type") == "response":
+                        results[idx] = {"status": "completed", "summary": event.get("content", "")}
+                    elif event.get("type") in ("task_failed", "error"):
+                        results[idx] = {"status": "failed", "error": event.get("error", event.get("content", ""))}
+                    yield event
+
+                executed_resume.add(idx)
+
+                # Iteration: check for verify success after retry
+                verify_group = find_group_for_verify_step(idx, iteration_groups)
+                if (verify_group
+                        and verify_group.attempt > 0
+                        and results.get(idx, {}).get("status") == "completed"):
+                    verify_group.succeeded = True
+                    yield {
+                        "type": "iteration_succeeded",
+                        "group_id": verify_group.group_id,
+                        "attempts": verify_group.attempt + 1,
+                    }
+
+                # Persist after each step
+                persist_results = dict(results)
+                if iteration_groups:
+                    persist_results["_iteration_groups"] = {
+                        gid: g.to_dict()
+                        for gid, g in iteration_groups.items()
+                    }
                 await self._db.execute(
-                    "UPDATE plans SET status = 'paused', updated_at = ? WHERE id = ?",
-                    (datetime.now(timezone.utc).isoformat(), plan_id),
+                    "UPDATE plans SET results_json = ?, current_step = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(persist_results, default=str), idx + 1,
+                     datetime.now(timezone.utc).isoformat(), plan_id),
                 )
                 await self._db.commit()
-                yield {
-                    "type": "error",
-                    "content": f"Step {idx + 1} failed again. Plan paused. Say 'continue' to retry.",
-                }
-                return
+
+                if results.get(idx, {}).get("status") == "failed":
+                    iter_group = find_group_for_verify_step(idx, iteration_groups)
+
+                    if iter_group and iter_group.can_retry():
+                        error_text = results[idx].get("error", "unknown error")
+                        iter_group.record_failure(error_text)
+                        yield {
+                            "type": "iteration_retry",
+                            "group_id": iter_group.group_id,
+                            "attempt": iter_group.attempt,
+                            "max_attempts": iter_group.max_attempts,
+                            "error": error_text,
+                            "work_steps": iter_group.work_step_indices,
+                            "verify_step": iter_group.verify_step_index,
+                        }
+                        # Clear work + verify for re-execution
+                        for work_idx in iter_group.work_step_indices:
+                            executed_resume.discard(work_idx)
+                            results.pop(work_idx, None)
+                        executed_resume.discard(idx)
+                        results.pop(idx, None)
+                        resume_loop = True
+                        break
+
+                    elif iter_group and not iter_group.can_retry():
+                        yield {
+                            "type": "iteration_exhausted",
+                            "group_id": iter_group.group_id,
+                            "attempts": iter_group.attempt,
+                            "last_error": iter_group.last_verify_error,
+                        }
+
+                    # Pause
+                    await self._db.execute(
+                        "UPDATE plans SET status = 'paused', updated_at = ? WHERE id = ?",
+                        (datetime.now(timezone.utc).isoformat(), plan_id),
+                    )
+                    await self._db.commit()
+                    yield {
+                        "type": "error",
+                        "content": f"Step {idx + 1} failed again. Plan paused. Say 'continue' to retry.",
+                    }
+                    return
 
         # All done
         await self._db.execute(
@@ -2744,6 +3003,11 @@ class Kernel:
                             }
                     except Exception as e:
                         logger.debug("Post-task suggestion failed: %s", e)
+
+                    # Notify recipe engine of task completion
+                    asyncio.create_task(self._recipe_engine.on_post_task(
+                        skill_id, action, summary,
+                    ))
 
                 asyncio.create_task(self._persist_and_absorb_task(
                     task.id, skill_id, manifest.name, instruction,
