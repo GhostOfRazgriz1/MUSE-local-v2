@@ -36,6 +36,8 @@ class SubTask:
     instruction: str
     action: str | None = None
     depends_on: list[int] = field(default_factory=list)
+    iteration_group: str | None = None   # group name, e.g. "code_test"
+    iteration_role: str | None = None    # "work" | "verify"
 
 
 @dataclass
@@ -214,7 +216,10 @@ class SemanticIntentClassifier:
                     "respond directly.\n"
                     "7. Use 'goal' when the user gives a high-level objective requiring "
                     "4+ steps (research + analysis + output). Use 'multi' for simple "
-                    "2-3 skill combinations like 'search X and save a note'.\n\n"
+                    "2-3 skill combinations like 'search X and save a note'.\n"
+                    "8. The user may write in ANY language. Match their intent to skills "
+                    "regardless of language — skill descriptions are in English but the "
+                    "user's message may not be.\n\n"
                     "Reply with ONLY valid JSON, no markdown, no explanation."
                 ),
             )

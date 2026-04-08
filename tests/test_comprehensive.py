@@ -70,7 +70,7 @@ async def ws_send_and_wait(ws, content, timeout=300):
             return "TIMEOUT", timeout
 
 
-async def test():
+async def run_comprehensive_test():
     import websockets
 
     print("=" * 60)
@@ -212,4 +212,4 @@ async def test():
 
 
 if __name__ == "__main__":
-    asyncio.run(test())
+    asyncio.run(run_comprehensive_test())
