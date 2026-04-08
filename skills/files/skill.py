@@ -64,6 +64,81 @@ SKIP_DIRS = frozenset({
     "dist", "build", ".next", ".nuxt",
 })
 
+
+# Well-known folder aliases in various languages → actual system paths.
+# The LLM may extract locale-specific names (e.g. "桌面" for Desktop)
+# from user messages.  We resolve them to real OS paths here so the
+# file skill works regardless of the user's language.
+def _build_folder_aliases() -> dict[str, Path]:
+    """Build a mapping from folder aliases to actual system paths."""
+    home = Path.home()
+    aliases: dict[str, Path] = {}
+
+    desktop = home / "Desktop"
+    documents = home / "Documents"
+    downloads = home / "Downloads"
+
+    # On Windows, use shell folders for accuracy
+    if os.name == "nt":
+        try:
+            import winreg
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+            ) as key:
+                for name, folder in [("Desktop", desktop), ("Personal", documents),
+                                     ("{374DE290-123F-4565-9164-39C4925E467B}", downloads)]:
+                    try:
+                        val, _ = winreg.QueryValueEx(key, name)
+                        expanded = os.path.expandvars(val)
+                        if name == "Desktop":
+                            desktop = Path(expanded)
+                        elif name == "Personal":
+                            documents = Path(expanded)
+                        else:
+                            downloads = Path(expanded)
+                    except FileNotFoundError:
+                        pass
+        except Exception:
+            pass
+
+    for alias in ("desktop", "桌面", "デスクトップ", "바탕화면", "bureau", "escritorio", "schreibtisch"):
+        aliases[alias] = desktop
+    for alias in ("documents", "文档", "ドキュメント", "문서", "mes documents", "documentos", "dokumente"):
+        aliases[alias] = documents
+    for alias in ("downloads", "下载", "ダウンロード", "다운로드", "téléchargements", "descargas"):
+        aliases[alias] = downloads
+    aliases["home"] = home
+    aliases["~"] = home
+
+    return aliases
+
+
+_FOLDER_ALIASES = _build_folder_aliases()
+
+
+def _resolve_folder_alias(path_str: str) -> str:
+    """If the first component of *path_str* is a known folder alias,
+    replace it with the real system path.
+
+    Examples:
+        "桌面/report.txt"  → "C:/Users/me/Desktop/report.txt"
+        "desktop/foo.md"   → "C:/Users/me/Desktop/foo.md"
+        "~/notes.txt"      → "C:/Users/me/notes.txt"
+    """
+    # Normalize separators for splitting
+    normalized = path_str.replace("\\", "/")
+    parts = normalized.split("/", 1)
+    first = parts[0].lower().strip()
+
+    real_dir = _FOLDER_ALIASES.get(first)
+    if real_dir is None:
+        return path_str
+
+    if len(parts) > 1:
+        return str(real_dir / parts[1])
+    return str(real_dir)
+
 # ── Approved-directory management ────────────────────────────────────
 
 
@@ -112,6 +187,9 @@ async def _ensure_access(ctx, path: str) -> str:
     If not yet approved, prompts the user for consent and persists the grant.
     Returns the resolved absolute path string.
     """
+    # Translate locale-specific folder names (e.g. "桌面" → Desktop)
+    path = _resolve_folder_alias(path)
+
     # Resolve relative paths against the workspace, not cwd
     p = Path(path)
     if not p.is_absolute():
@@ -575,6 +653,9 @@ async def _op_write(ctx, instruction: str, params: dict) -> dict:
     existed = p.exists()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
+    # Update resolved after potential flatten so the path in the
+    # response matches the actual file location on disk.
+    resolved = str(p)
 
     action = "Overwrote" if existed else "Created"
     preview = content[:300] + "..." if len(content) > 300 else content
