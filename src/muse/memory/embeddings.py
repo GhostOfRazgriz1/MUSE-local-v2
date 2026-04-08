@@ -25,6 +25,19 @@ class EmbeddingService:
         self._model: Optional[object] = None
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _auto_mirror() -> None:
+        """If HuggingFace is unreachable, switch to hf-mirror.com."""
+        import os
+        if os.environ.get("HF_ENDPOINT"):
+            return  # user already set a mirror
+
+        import urllib.request
+        try:
+            urllib.request.urlopen("https://huggingface.co", timeout=3)
+        except Exception:
+            os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+
     def _ensure_model(self) -> None:
         """Load the model if not already loaded. Thread-safe."""
         if self._model is not None:
@@ -33,6 +46,7 @@ class EmbeddingService:
             # Double-checked locking
             if self._model is not None:
                 return
+            self._auto_mirror()
             from sentence_transformers import SentenceTransformer
             self._model = SentenceTransformer(self._model_name)
 

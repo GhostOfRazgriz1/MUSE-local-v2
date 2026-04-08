@@ -13,6 +13,9 @@ echo.
 set "ROOT=%~dp0"
 cd /d "%ROOT%"
 
+:: HuggingFace mirror is auto-detected. To force it manually:
+:: set "HF_ENDPOINT=https://hf-mirror.com"
+
 :: Use %TEMP% for launcher scripts to avoid OneDrive locks and
 :: "Permission denied" when re-running while services are still alive.
 set "LAUNCHER_DIR=%TEMP%\muse_launchers"
