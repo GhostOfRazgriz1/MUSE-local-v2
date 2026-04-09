@@ -110,6 +110,29 @@ async def run(ctx) -> dict:
                 max_tokens=200,
             )
 
+    # ── Conversation context: enrich vague follow-up queries ──────
+    # When the user says something like "search for that" or
+    # "I'd emphasize on food" as a follow-up to an earlier
+    # conversation about a specific topic, the raw instruction
+    # is too vague to produce good search results.  Use the
+    # conversation summary to build a specific query.
+    if not pipeline:
+        convo = ctx.brief.get("context", {}).get("conversation_summary", "")
+        if convo and len(instruction.split()) < 12:
+            instruction = await ctx.llm.complete(
+                prompt=(
+                    f"User's search request: {instruction}\n\n"
+                    f"Recent conversation context:\n{convo[:2000]}\n\n"
+                    f"The user's request is a follow-up to the conversation "
+                    f"above. Rewrite it as a specific, self-contained search "
+                    f"query that incorporates the relevant topic from the "
+                    f"conversation. Output ONLY the rewritten search query, "
+                    f"nothing else."
+                ),
+                system="You rewrite vague follow-up queries into specific search queries using conversation context.",
+                max_tokens=200,
+            )
+
     query = _extract_query(instruction)
     if not query:
         return _err("Please provide a search query.")
