@@ -791,7 +791,7 @@ class LocalBridge:
 
                 # Collect the result from the child task's events
                 child_result = None
-                async for event in self._orch._execute_sub_task(
+                async for event in self._orch._registry.get("skill_executor").execute(
                     skill_id=target_skill,
                     instruction=instruction,
                     intent=intent,

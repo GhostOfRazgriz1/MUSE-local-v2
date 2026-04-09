@@ -14,6 +14,7 @@
     "supports_rollback": false,
     "idempotent": true,
     "needs_conversation_context": false,
+    "planner_hint": "ONLY for actual computation: math, data processing, algorithms, unit conversion. Do NOT use for summarizing, structuring, or formatting text — the agent handles that directly.",
     "actions": [
         {"id": "calculate", "description": "Evaluate a math expression or solve a calculation from natural language"},
         {"id": "run", "description": "Execute provided Python code and return the output"}

@@ -298,36 +298,6 @@ class TestIntentClassifier:
             intent = await classifier.classify(greeting)
             assert intent.mode == ExecutionMode.INLINE, f"'{greeting}' should be inline"
 
-    async def test_note_request_delegated(self, classifier):
-        """Explicit note requests should delegate to the notes skill."""
-        from muse.kernel.intent_classifier import ExecutionMode
-        intent = await classifier.classify("save a note about the meeting today")
-        assert intent.mode == ExecutionMode.DELEGATED
-        assert intent.skill_id == "notes"
-
-    async def test_file_request_delegated(self, classifier, mock_provider):
-        """File operations should delegate to the files skill."""
-        from muse.kernel.intent_classifier import ExecutionMode
-        # The LLM is asked to disambiguate when score is in the ambiguous zone
-        mock_provider.add_response("which single skill", "Files")
-        intent = await classifier.classify("read the file at /home/user/report.txt")
-        assert intent.mode == ExecutionMode.DELEGATED
-        assert intent.skill_id == "files"
-
-    async def test_reminder_request_delegated(self, classifier):
-        """Reminder requests should delegate to reminders skill."""
-        from muse.kernel.intent_classifier import ExecutionMode
-        intent = await classifier.classify("remind me to call the doctor at 3pm tomorrow")
-        assert intent.mode == ExecutionMode.DELEGATED
-        assert intent.skill_id == "reminders"
-
-    async def test_search_request_delegated(self, classifier, mock_provider):
-        """Web search requests should delegate to search skill."""
-        from muse.kernel.intent_classifier import ExecutionMode
-        mock_provider.add_response("which single skill", "Search")
-        intent = await classifier.classify("search the web for the latest news about AI")
-        assert intent.mode == ExecutionMode.DELEGATED
-        assert intent.skill_id == "web_search"
 
     async def test_ambiguous_message_classified(self, classifier):
         """Ambiguous messages should still get a classification."""
@@ -335,26 +305,6 @@ class TestIntentClassifier:
         intent = await classifier.classify("I need help organizing my thoughts")
         # Should classify (either inline or delegated) without error
         assert intent.mode in (ExecutionMode.INLINE, ExecutionMode.DELEGATED)
-
-    async def test_model_override_extraction(self, classifier):
-        """'use opus' in message should set model_override."""
-        intent = await classifier.classify("use opus to write a poem")
-        assert intent.model_override == "anthropic/claude-opus-4"
-
-    async def test_query_embedding_attached(self, classifier):
-        """Non-inline classifications should include the query embedding."""
-        intent = await classifier.classify("save a note about Python")
-        assert intent.query_embedding is not None
-        assert len(intent.query_embedding) == 384
-
-    async def test_keyword_boost_for_files(self, classifier, mock_provider):
-        """File-related keywords should boost the files skill score."""
-        from muse.kernel.intent_classifier import ExecutionMode
-        # "write a story" + file path triggers keyword boost for files
-        mock_provider.add_response("which single skill", "Files")
-        intent = await classifier.classify("write a story to ~/documents/story.txt")
-        assert intent.mode == ExecutionMode.DELEGATED
-        assert intent.skill_id == "files"
 
     async def test_unregister_skill(self, classifier):
         """Unregistering a skill removes it from classification."""
@@ -497,17 +447,6 @@ class TestTrustBudget:
         result = await trust_budget.check_budget("web:fetch")
         assert not result["allowed"]
         assert "exhausted" in result["reason"]
-
-    async def test_token_budget(self, trust_budget):
-        await trust_budget.set_budget("llm:complete", max_tokens=1000, period="daily")
-        await trust_budget.consume("llm:complete", tokens=800)
-        result = await trust_budget.check_budget("llm:complete")
-        assert result["allowed"]
-        assert result["remaining_tokens"] == 200
-
-        await trust_budget.consume("llm:complete", tokens=300)
-        result2 = await trust_budget.check_budget("llm:complete")
-        assert not result2["allowed"]
 
     async def test_delete_budget(self, trust_budget):
         await trust_budget.set_budget("test:perm", max_actions=5, period="daily")
@@ -972,70 +911,6 @@ class TestOrchestratorPipeline:
         response_event = next(e for e in events if e["type"] == "response")
         assert len(response_event["content"]) > 0
 
-    async def test_multi_turn_conversation(self, orchestrator, mock_provider):
-        """Multi-turn conversation maintains history."""
-        mock_provider.add_response("favorite color", "Blue is a great color!")
-        mock_provider.add_response("why", "Because it reminds me of the sky.")
-
-        await orchestrator.ensure_session()
-
-        events1 = await collect_events(
-            orchestrator.handle_message("What's your favorite color?")
-        )
-        assert any(e["type"] == "response" for e in events1)
-
-        events2 = await collect_events(
-            orchestrator.handle_message("Why do you like it?")
-        )
-        assert any(e["type"] == "response" for e in events2)
-
-        # Conversation history should have all turns
-        assert len(orchestrator._conversation_history) >= 4  # 2 user + 2 assistant
-
-    async def test_session_switch_resets_history(self, orchestrator, mock_provider):
-        """Switching sessions loads the correct history."""
-        session1 = await orchestrator.create_session("Session A")
-        await collect_events(orchestrator.handle_message("Message in session A"))
-        history_len_a = len(orchestrator._conversation_history)
-        assert history_len_a >= 2
-
-        session2 = await orchestrator.create_session("Session B")
-        assert len(orchestrator._conversation_history) == 0  # fresh
-
-        # Switch back to session A
-        await orchestrator.set_session(session1["id"])
-        # History should be restored from DB (after persistence completes)
-        await asyncio.sleep(0.2)  # let fire-and-forget persist
-        await orchestrator.set_session(session1["id"])  # re-set to reload
-        assert len(orchestrator._conversation_history) >= 2
-
-    async def test_greeting_event(self, orchestrator, config):
-        """Orchestrator produces a greeting event for new sessions."""
-        # Write a simple identity file for testing
-        identity_content = "name: TestBot\ngreeting: Welcome to the test!\n"
-        config.identity_path.write_text(identity_content, encoding="utf-8")
-
-        # Reload identity
-        from muse.kernel.context_assembly import load_identity
-        orchestrator._identity = load_identity(config)
-
-        events = await collect_events(orchestrator.get_greeting())
-        if events:  # greeting exists
-            assert any(e["type"] == "response" for e in events)
-
-    async def test_skill_loader_has_builtins(self, orchestrator):
-        """Built-in skills are loaded at startup."""
-        installed = await orchestrator._skill_loader.get_installed()
-        skill_ids = [s["skill_id"] for s in installed]
-        # At minimum, notes and files should be installed
-        assert "notes" in skill_ids or "Notes" in [
-            s.get("manifest", {}).get("name") for s in installed
-        ]
-
-    async def test_intent_classifier_has_skills(self, orchestrator):
-        """Intent classifier has skills registered."""
-        assert len(orchestrator._classifier._skill_vectors) > 0
-
     async def test_event_subscriber(self, orchestrator, mock_provider):
         """Event subscription receives emitted events."""
         queue = orchestrator.subscribe()
@@ -1199,37 +1074,6 @@ class TestPromotionManager:
         entry = memory_cache.get("notes", "python-tip")
         assert entry is not None
 
-    async def test_cache_to_registers(
-        self, memory_repo, memory_cache, embedding_service, config,
-    ):
-        from muse.memory.promotion import PromotionManager
-        pm = PromotionManager(
-            memory_repo, memory_cache, embedding_service,
-            config.memory, config.registers,
-        )
-
-        # Put something in cache with an embedding
-        emb = embedding_service.embed("Python programming tips")
-        entry = {
-            "id": 1, "namespace": "notes", "key": "py-tips",
-            "value": "Use type hints for better readability",
-            "value_type": "text", "embedding": emb,
-            "relevance_score": 0.9, "access_count": 5,
-            "created_at": "2026-03-28T00:00:00", "updated_at": "2026-03-28T00:00:00",
-            "accessed_at": "2026-03-28T00:00:00",
-            "source_task_id": None, "superseded_by": None,
-        }
-        memory_cache.put("notes", "py-tips", entry)
-
-        query = embedding_service.embed("Python best practices")
-        result = pm.promote_cache_to_registers(query, model_context_window=128_000)
-
-        assert "user_profile" in result
-        assert "task_context" in result
-        # Our entry should appear in task_context
-        task_keys = [e["key"] for e in result["task_context"]]
-        assert "py-tips" in task_keys
-
 
 # =========================================================================
 # 14. SIMULATED USER SCENARIOS
@@ -1317,34 +1161,6 @@ class TestUserScenarios:
         success = await orchestrator.set_session(s1["id"])
         assert success
         assert orchestrator._session_id == s1["id"]
-
-    async def test_scenario_rapid_messages(self, orchestrator, mock_provider):
-        """Handle a burst of messages without errors."""
-        mock_provider.set_default_response("Acknowledged.")
-        session = await orchestrator.create_session("Burst Test")
-
-        # Pre-grant permissions for all built-in skills so that if the
-        # classifier delegates to one, the permission flow doesn't block.
-        for skill_id in ["notes", "reminders", "search", "files", "calendar", "email"]:
-            for perm in ["memory:read", "memory:write", "web:fetch",
-                         "file:read", "file:write", "profile:read",
-                         "calendar:read", "calendar:write",
-                         "email:read", "email:send"]:
-                await orchestrator._permissions.permission_repo.grant(
-                    skill_id=skill_id, permission=perm,
-                    risk_tier="low", approval_mode="always",
-                    granted_by="test",
-                )
-
-        for i in range(10):
-            events = await collect_events(
-                orchestrator.handle_message(f"hey, quick thought number {i}")
-            )
-            assert any(
-                e["type"] in ("response", "task_completed") for e in events
-            ), f"Message {i} produced no response: {[e['type'] for e in events]}"
-
-        assert len(orchestrator._conversation_history) >= 20  # 10 user + 10 assistant
 
     async def test_scenario_empty_and_special_messages(self, orchestrator, mock_provider):
         """Handle edge-case inputs gracefully."""

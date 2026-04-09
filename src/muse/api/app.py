@@ -134,7 +134,7 @@ def create_app(orchestrator=None) -> FastAPI:
     )
 
     # Register routes — all protected by bearer-token auth
-    from muse.api.routes import chat, tasks, permissions, settings, skills, sessions, oauth, files, mcp, memories, screen
+    from muse.api.routes import chat, tasks, permissions, settings, skills, sessions, oauth, files, mcp, memories, screen, recipes
     app.include_router(chat.router, prefix="/api", dependencies=_AUTH)
     # WebSocket router — no header-based auth (browsers can't send
     # Authorization headers on WS upgrades).  Auth is done via query
@@ -148,6 +148,7 @@ def create_app(orchestrator=None) -> FastAPI:
     app.include_router(files.router, prefix="/api", dependencies=_AUTH)
     app.include_router(mcp.router, prefix="/api", dependencies=_AUTH)
     app.include_router(memories.router, prefix="/api", dependencies=_AUTH)
+    app.include_router(recipes.router, prefix="/api", dependencies=_AUTH)
     app.include_router(screen.router, dependencies=_AUTH)
 
     # OAuth router — the /callback endpoint is a browser redirect target

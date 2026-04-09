@@ -12,6 +12,7 @@
         "api.bing.microsoft.com",
         "api.duckduckgo.com"
     ],
+    "planner_hint": "Use as the FIRST step when the goal needs web information and no specific URL is provided. Returns summarized results with source URLs that can be passed to Webpage Reader.",
     "actions": [
         {"id": "search", "description": "Search the web for information on a topic"},
         {"id": "configure", "description": "Set up or change the search API key"}

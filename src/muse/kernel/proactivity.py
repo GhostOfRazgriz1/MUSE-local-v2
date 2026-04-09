@@ -493,7 +493,7 @@ class ProactivityManager:
 
         result_summary = ""
         try:
-            async for event in self._registry.get("kernel")._execute_sub_task(
+            async for event in self._registry.get("skill_executor").execute(
                 skill_id=skill_id,
                 instruction=instruction,
                 intent=intent,
@@ -603,7 +603,7 @@ class ProactivityManager:
             return self._cached_greeting
 
         settings = await self.get_settings()
-        personality = self._registry.get("kernel")._parse_identity_field("greeting") or ""
+        personality = self._registry.get("greeting").parse_identity_field("greeting") or ""
         repo = self._registry.get("memory_repo")
 
         # ── Wave 1: all independent DB fetches in parallel ─────────
@@ -725,7 +725,7 @@ class ProactivityManager:
 
         if not settings["llm_greeting"]:
             static = personality or f"Hello{(', ' + user_name) if user_name else ''}!"
-            briefing = await self._registry.get("kernel")._build_briefing()
+            briefing = await self._registry.get("greeting").build_briefing()
             if briefing:
                 return _make_result(f"{static}\n\n{briefing}")
             return _make_result(static)
@@ -747,7 +747,7 @@ class ProactivityManager:
             time_of_day = "night"
 
         time_str = now.strftime("%I:%M %p on %A, %B %d")
-        agent_name = self._registry.get("kernel")._parse_identity_field("name") or "MUSE"
+        agent_name = self._registry.get("greeting").parse_identity_field("name") or "MUSE"
 
         # Scheduled task results
         briefing_parts = []
@@ -837,7 +837,7 @@ class ProactivityManager:
 
         # Fallback to static greeting + briefing
         static = personality or f"Hello{(', ' + user_name) if user_name else ''}!"
-        briefing = await self._registry.get("kernel")._build_briefing()
+        briefing = await self._registry.get("greeting").build_briefing()
         if briefing:
             return _make_result(f"{static}\n\n{briefing}")
         return _make_result(static)

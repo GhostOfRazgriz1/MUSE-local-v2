@@ -98,6 +98,20 @@ def _err(msg: str) -> dict:
 # ── Core: fetch + parse + LLM-clean ────────────────────────────
 
 
+def _extract_urls_from_pipeline(ctx) -> list[str]:
+    """Extract URLs from pipeline context (prior search results, etc.)."""
+    pipeline = ctx.brief.get("context", {}).get("pipeline_context", {})
+    urls = []
+    for key, val in pipeline.items():
+        if not val or not isinstance(val, str):
+            continue
+        for m in _URL_RE.finditer(val):
+            candidate = m.group(0).rstrip(".,;:)]}")
+            if candidate not in urls:
+                urls.append(candidate)
+    return urls
+
+
 async def _fetch_page(ctx, instruction: str) -> dict | None:
     """Fetch a URL, parse HTML, and return raw data.
 
@@ -106,15 +120,20 @@ async def _fetch_page(ctx, instruction: str) -> dict | None:
     """
     url = _extract_url(instruction)
 
+    # If no URL in instruction, try pipeline context (e.g. from a prior
+    # Search step).  Pick the first URL found — the planner should have
+    # arranged the dependency so the search results are available here.
     if not url:
-        extracted = await ctx.llm.complete(
-            prompt=f"Extract the URL from this request. Reply with ONLY the URL.\n\n{instruction}",
-            system="Output only a URL. Nothing else.",
-            max_tokens=100,
-        )
-        url = _extract_url(extracted.strip())
+        pipeline_urls = _extract_urls_from_pipeline(ctx)
+        if pipeline_urls:
+            url = pipeline_urls[0]
 
     if not url:
+        # No URL anywhere — fail gracefully instead of hallucinating one.
+        ctx._page_error = (
+            "No URL provided in the instruction or pipeline context. "
+            "Use the Search skill first to find relevant URLs."
+        )
         return None
 
     await ctx.task.report_status(f"Fetching {url}")
@@ -182,6 +201,9 @@ async def read(ctx) -> dict:
     page = await _fetch_page(ctx, instruction)
 
     if not page:
+        error = getattr(ctx, "_page_error", None)
+        if error:
+            return _err(error)
         url = _extract_url(instruction)
         return _err(f"Could not fetch or extract content from {url or 'the URL'}.")
 
@@ -212,6 +234,9 @@ async def summarize(ctx) -> dict:
     page = await _fetch_page(ctx, instruction)
 
     if not page:
+        error = getattr(ctx, "_page_error", None)
+        if error:
+            return _err(error)
         url = _extract_url(instruction)
         return _err(f"Could not fetch or extract content from {url or 'the URL'}.")
 

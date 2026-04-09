@@ -124,11 +124,13 @@ class SemanticIntentClassifier:
     def register_skill(
         self, skill_id: str, name: str, description: str,
         actions: list[dict] | None = None,
+        planner_hint: str = "",
     ) -> None:
         self._skills[skill_id] = {
             "description": description,
             "name": name,
             "actions": actions or [],
+            "planner_hint": planner_hint,
         }
         self._rebuild_cache()
         logger.debug("Registered skill %s (%d actions)", skill_id, len(actions or []))
@@ -136,6 +138,21 @@ class SemanticIntentClassifier:
     def unregister_skill(self, skill_id: str) -> None:
         self._skills.pop(skill_id, None)
         self._rebuild_cache()
+
+    def get_planner_catalog(self) -> str:
+        """Build an enriched skill catalog for the plan generator.
+
+        Includes planner_hint (constraints/requirements) when available,
+        so the planner can reason about what each skill needs.
+        """
+        lines = []
+        for sid, info in self._skills.items():
+            line = f"  - {sid}: {info['description']}"
+            hint = info.get("planner_hint", "")
+            if hint:
+                line += f"\n    CONSTRAINT: {hint}"
+            lines.append(line)
+        return "\n".join(lines)
 
     async def classify(
         self, user_message: str,

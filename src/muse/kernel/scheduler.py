@@ -196,7 +196,7 @@ class Scheduler:
             )
 
             result_summary = ""
-            async for event in self._registry.get("kernel")._execute_sub_task(
+            async for event in self._registry.get("skill_executor").execute(
                 skill_id=skill_id,
                 instruction=instruction,
                 intent=intent,

@@ -229,6 +229,7 @@ class InlineHandler:
         # Reload the updated identity into the assembler
         kernel._identity = load_identity(config)
         kernel._context_assembler._identity = kernel._identity
+        self._registry.register("identity_text", kernel._identity)
 
         # Record in conversation history
         identity_msg = f"[Identity updated per user request: {user_message}]"

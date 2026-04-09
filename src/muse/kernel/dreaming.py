@@ -245,6 +245,17 @@ class DreamingManager:
         inserted_result, _ = await _aio.gather(_store_memories(), _store_summary())
         inserted = inserted_result or []
 
+        # Notify recipe engine of newly written memories
+        if facts and self._registry.has("recipe_engine"):
+            for fact in facts:
+                _aio.create_task(
+                    self._registry.get("recipe_engine").on_memory_write(
+                        fact.get("namespace", ""),
+                        fact.get("key", ""),
+                        fact.get("value", ""),
+                    )
+                )
+
         if not facts:
             get_tracer().event("dreaming", "no_memories", session_id=session_id)
 

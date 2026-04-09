@@ -6297,6 +6297,27 @@ textarea:focus-visible {
   font-family: var(--font-mono);
 }
 
+/* ── Recipe badges & schedule ── */
+.settings-recipe-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  vertical-align: middle;
+  opacity: 0.7;
+}
+.settings-recipe-schedule {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  opacity: 0.6;
+}
+
 /* ── Notification Settings ── */
 .settings-notification-row {
   padding: 14px 16px;

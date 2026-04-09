@@ -14,6 +14,7 @@
     "is_first_party": true,
     "supports_rollback": false,
     "idempotent": true,
+    "planner_hint": "REQUIRES a specific URL in the instruction. If you don't have a URL, use Search first to find one. Never send a vague topic — always include the actual https:// link.",
     "actions": [
         {"id": "read", "description": "Read and extract text from a webpage URL"},
         {"id": "summarize", "description": "Read a webpage and provide a concise summary"}

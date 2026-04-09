@@ -58,6 +58,7 @@ class SkillManifest:
     supports_rollback: bool = False
     idempotent: bool = True
     needs_conversation_context: bool = True
+    planner_hint: str = ""  # constraint/requirement visible to the plan generator
 
     @classmethod
     def from_json(cls, data: str | dict) -> SkillManifest:
