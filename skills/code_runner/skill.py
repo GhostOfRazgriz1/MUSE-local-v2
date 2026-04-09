@@ -140,6 +140,22 @@ async def calculate(ctx) -> dict:
     """Convert a natural language math problem to Python and execute it."""
     instruction = ctx.brief.get("instruction", "")
 
+    # Enrich vague follow-up instructions with conversation context
+    # e.g. "now double it" after discussing a calculation
+    convo = ctx.brief.get("context", {}).get("conversation_summary", "")
+    if convo and len(instruction.split()) < 10:
+        instruction = await ctx.llm.complete(
+            prompt=(
+                f"User's calculation request: {instruction}\n\n"
+                f"Recent conversation:\n{convo[:1500]}\n\n"
+                f"Rewrite the request as a self-contained math/code problem, "
+                f"incorporating any numbers, formulas, or variables from the "
+                f"conversation. Output ONLY the rewritten problem, nothing else."
+            ),
+            system="Rewrite vague follow-up math requests into specific problems using conversation context.",
+            max_tokens=200,
+        )
+
     await ctx.task.report_status("Generating code...")
 
     # Ask LLM to write the Python code
