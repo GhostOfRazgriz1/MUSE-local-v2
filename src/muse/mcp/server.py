@@ -223,11 +223,7 @@ class MuseMCPServer:
         # Lower the relevance score for externally-written entries
         entry = await self._repo.get(namespace, tagged_key)
         if entry:
-            await self._repo._db.execute(
-                "UPDATE memory_entries SET relevance_score = ? WHERE id = ?",
-                (_EXTERNAL_RELEVANCE, entry["id"]),
-            )
-            await self._repo._db.commit()
+            await self._repo.set_relevance_score(entry["id"], _EXTERNAL_RELEVANCE)
 
         return [TextContent(
             type="text",

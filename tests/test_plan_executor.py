@@ -125,6 +125,8 @@ def _make_session():
     session.steering_queue = asyncio.Queue()
     session.pending_permission_tasks = {}
     session.conversation_history = []
+    session.add_message = AsyncMock()
+    session.drain_steering_queue = MagicMock(return_value=[])
     return session
 
 

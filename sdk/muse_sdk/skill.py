@@ -52,3 +52,40 @@ class SkillClient:
             raise ExternalServiceError(skill_id, message=resp.error)
 
         return resp.result if hasattr(resp, "result") and resp.result else {}
+
+    async def gateway_call(
+        self,
+        endpoint: str,
+        payload: str | None = None,
+        method: str = "POST",
+    ) -> dict:
+        """Call an internal gateway endpoint through the IPC bridge.
+
+        Only available for first-party skills running via LocalBridge.
+        Bypasses SSRF protection since the call routes through the
+        orchestrator, not the network.
+
+        Args:
+            endpoint: Gateway endpoint (e.g. "mcp/register")
+            payload: JSON string payload
+            method: HTTP method (default POST)
+
+        Returns:
+            Result dict from the gateway.
+        """
+        from muse_sdk.ipc_client import GatewayCallMsg
+
+        request_id = str(uuid.uuid4())
+        await self._ipc.send(GatewayCallMsg(
+            request_id=request_id,
+            endpoint=endpoint,
+            method=method,
+            payload=payload,
+        ))
+        resp = await self._ipc.receive()
+
+        if hasattr(resp, "error") and resp.error:
+            from muse_sdk.errors import ExternalServiceError
+            raise ExternalServiceError("gateway", message=resp.error)
+
+        return resp.result if hasattr(resp, "result") and resp.result else {}

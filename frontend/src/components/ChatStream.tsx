@@ -232,7 +232,7 @@ function processChildren(children: React.ReactNode): React.ReactNode {
   return children;
 }
 
-export const ChatStream: React.FC<ChatStreamProps> = ({
+export const ChatStream: React.FC<ChatStreamProps> = React.memo(({
   events,
   connected,
   agentMood = "neutral",
@@ -713,10 +713,14 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
                   dateSep = <div className="date-separator"><span>{label}</span></div>;
                 }
               }
+              // Stable key: prefer DB id, then fall back to array index
+              const stableKey = ("_dbId" in msg && msg._dbId != null) ? `db-${msg._dbId}`
+                : ("_key" in msg && msg._key) ? String(msg._key)
+                : `idx-${i}`;
               // Render helper — wraps any message element with a date separator if needed
               const wrapMsg = (el: React.ReactNode) =>
-                dateSep ? <React.Fragment key={i}>{dateSep}{el}</React.Fragment>
-                        : <React.Fragment key={i}>{el}</React.Fragment>;
+                dateSep ? <React.Fragment key={stableKey}>{dateSep}{el}</React.Fragment>
+                        : <React.Fragment key={stableKey}>{el}</React.Fragment>;
 
               if ("role" in msg && msg.role === "user") {
                 return wrapMsg(
@@ -1372,7 +1376,7 @@ export const ChatStream: React.FC<ChatStreamProps> = ({
       </div>
     </div>
   );
-};
+});
 
 /** Mode-selector + allow/deny for permission requests. */
 const APPROVAL_MODES: { value: ApprovalMode; label: string; hint: string }[] = [

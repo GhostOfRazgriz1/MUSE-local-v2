@@ -156,8 +156,24 @@ async def chat_websocket(
 
         # Re-emit active task_started events so the frontend restores
         # the task counter and activity indicator.
-        for task_event in orchestrator.get_active_tasks_for_session(session_id):
+        active_tasks = orchestrator.get_active_tasks_for_session(session_id)
+        for task_event in active_tasks:
             await websocket.send_json(task_event)
+
+        # Send authoritative state snapshot for client reconciliation
+        session = get_service("session")
+        await websocket.send_json({
+            "type": "state_sync",
+            "session_id": session_id,
+            "mood": session.mood,
+            "executing_plan": session.executing_plan,
+            "active_task_count": len(active_tasks),
+            "pending_permission_count": len(orchestrator.get_pending_permissions_for_session(session_id)),
+            "token_usage": {
+                "tokens_in": session.llm_tokens_in,
+                "tokens_out": session.llm_tokens_out,
+            },
+        })
 
     # Subscribe to orchestrator events — pass session_id so the bus
     # filters at source (defense-in-depth; forward_events also filters).

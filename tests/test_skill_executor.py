@@ -197,6 +197,7 @@ def _build_session():
     session.conversation_history = []
     session.user_language = "en"
     session.mood = "neutral"
+    session.add_message = AsyncMock()
     return session
 
 
@@ -361,9 +362,7 @@ class TestSuccessfulExecution:
             record_history=True,
         ))
 
-        assert len(session.conversation_history) == 1
-        assert session.conversation_history[0]["role"] == "assistant"
-        assert session.conversation_history[0]["content"] == "Done"
+        session.add_message.assert_called_once_with("assistant", "Done")
 
     @pytest.mark.asyncio
     async def test_no_history_when_record_false(self):

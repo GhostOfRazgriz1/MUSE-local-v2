@@ -74,6 +74,7 @@ _RISK_RULES: list[tuple[str, str]] = [
     # Medium
     (r".*:write$", "medium"),
     (r".*:draft$", "medium"),
+    (r".*:fetch$", "medium"),
     # Low (catch-all for reads)
     (r".*:read$", "low"),
 ]
@@ -141,8 +142,8 @@ class PermissionManager:
         if grant is None:
             risk_tier = await self.get_risk_tier(permission)
             logger.info(
-                "Permission denied: skill=%s permission=%s risk=%s (no grant)",
-                skill_id, permission, risk_tier,
+                "Permission denied: skill=%s permission=%s risk=%s session=%s (no grant)",
+                skill_id, permission, risk_tier, self._current_session_id,
             )
             return PermissionCheck(
                 allowed=False,

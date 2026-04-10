@@ -121,6 +121,10 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
         } catch {
           return; // ignore malformed messages
         }
+        // Stamp a stable key for React reconciliation
+        if (!("_key" in parsed)) {
+          (parsed as any)._key = `evt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        }
         // Drop events from a stale session — prevents cross-session leakage
         // when the user switches sessions while a response is in flight.
         if (connGeneration !== generationRef.current) {
@@ -178,6 +182,12 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
           setEvents([]);
           return;
         }
+        // Server-authoritative state reconciliation on (re)connect
+        if (parsed.type === "state_sync") {
+          // Pass through as a regular event so App.tsx can reconcile mood/state
+          setEvents((prev) => [...prev, parsed]);
+          return;
+        }
         // Track pending interactive events
         if (INTERACTION_START_TYPES.has(parsed.type) && "request_id" in parsed) {
           pendingRef.current = new Set(pendingRef.current).add(parsed.request_id);
@@ -191,7 +201,8 @@ export function useWebSocket(requestedSessionId: string | null, reconnectToken?:
 
         setEvents((prev) => {
           const next = [...prev, parsed];
-          return next.length > MAX_EVENTS
+          // Only compact when 50 over limit (not every single event)
+          return next.length > MAX_EVENTS + 50
             ? structuralCompactEvents(next, pendingRef.current)
             : next;
         });

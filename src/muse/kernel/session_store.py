@@ -29,6 +29,9 @@ class SessionStore:
         "llm_calls_count",
         "llm_tokens_in",
         "llm_tokens_out",
+        "_event_bus",
+        "_plan_lock",
+        "_branch_lock",
     )
 
     def __init__(self) -> None:
@@ -47,6 +50,9 @@ class SessionStore:
         self.llm_calls_count: int = 0
         self.llm_tokens_in: int = 0
         self.llm_tokens_out: int = 0
+        self._event_bus: object | None = None
+        self._plan_lock: asyncio.Lock = asyncio.Lock()
+        self._branch_lock: asyncio.Lock = asyncio.Lock()
 
     def track_llm_usage(self, tokens_in: int, tokens_out: int) -> None:
         """Accumulate LLM token usage for the current session."""
@@ -74,3 +80,63 @@ class SessionStore:
         self.llm_calls_count = 0
         self.llm_tokens_in = 0
         self.llm_tokens_out = 0
+
+    # -- Event-bus integration -------------------------------------------
+
+    def set_event_bus(self, bus: object) -> None:
+        """Attach the MessageBus so mutations can emit events."""
+        self._event_bus = bus
+
+    async def add_message(
+        self,
+        role: str,
+        content: str,
+        *,
+        event_type: str = "message",
+        metadata: dict | None = None,
+    ) -> None:
+        """Append to conversation_history **and** emit a bus event.
+
+        This is the single authority for history mutation during normal
+        operation.  All call-sites that previously did a bare
+        ``conversation_history.append(...)`` should migrate here.
+        """
+        entry: dict = {
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if metadata:
+            entry["metadata"] = metadata
+        self.conversation_history.append(entry)
+        if self._event_bus is not None:
+            await self._event_bus.emit({
+                "type": "history_appended",
+                "role": role,
+                "event_type": event_type,
+                "_session_id": self.session_id,
+            })
+
+    # -- Guarded state mutations ------------------------------------------
+
+    async def set_executing_plan(self, value: bool) -> None:
+        """Atomically set the executing_plan flag."""
+        async with self._plan_lock:
+            self.executing_plan = value
+
+    async def set_branch_head(self, msg_id: int | None) -> None:
+        """Atomically set the branch_head_id."""
+        async with self._branch_lock:
+            self.branch_head_id = msg_id
+
+    # -- Steering helpers ------------------------------------------------
+
+    def drain_steering_queue(self) -> list[str]:
+        """Drain and return all pending steering messages."""
+        messages: list[str] = []
+        while True:
+            try:
+                messages.append(self.steering_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return messages

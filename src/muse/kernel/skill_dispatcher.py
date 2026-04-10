@@ -43,12 +43,6 @@ class SkillDispatcher:
         permissions = self._registry.get("permissions")
         skill_executor = self._registry.get("skill_executor")
 
-        # MCP virtual skills use a separate execution path
-        if skill_id.startswith("mcp:"):
-            async for event in self.handle_mcp_tool_call(user_message, intent):
-                yield event
-            return
-
         manifest = await skill_loader.get_manifest(skill_id)
 
         if not manifest:
@@ -57,14 +51,27 @@ class SkillDispatcher:
 
         # Permission pre-check — skip if resuming after permission approval.
         if not skip_permission_check:
-            checks = await asyncio.gather(*[
-                permissions.check_permission(skill_id, perm)
-                for perm in manifest.permissions
-            ])
-            missing_perms = [
-                perm for perm, check in zip(manifest.permissions, checks)
-                if not check.allowed and check.requires_user_approval
-            ]
+            # MCP tools may be auto-approved via server config.
+            skip_mcp_perm = False
+            if skill_id.startswith("mcp:") and intent.action:
+                mcp_manager = self._registry.get("mcp_manager") if self._registry.has("mcp_manager") else None
+                if mcp_manager:
+                    server_id = skill_id.removeprefix("mcp:")
+                    conn = mcp_manager.get_connection(server_id)
+                    if conn and intent.action in conn.config.auto_approve_tools:
+                        skip_mcp_perm = True
+
+            if skip_mcp_perm:
+                missing_perms = []
+            else:
+                checks = await asyncio.gather(*[
+                    permissions.check_permission(skill_id, perm)
+                    for perm in manifest.permissions
+                ])
+                missing_perms = [
+                    perm for perm, check in zip(manifest.permissions, checks)
+                    if not check.allowed and check.requires_user_approval
+                ]
         else:
             missing_perms = []
 
@@ -114,153 +121,6 @@ class SkillDispatcher:
             session_id=session_id,
         ):
             yield event
-
-    async def handle_mcp_tool_call(
-        self, user_message: str, intent,
-    ) -> AsyncIterator[dict]:
-        """Execute a tool call on an MCP server."""
-        server_id = intent.skill_id.removeprefix("mcp:")
-        tool_name = intent.action
-        permissions = self._registry.get("permissions")
-        mcp_manager = self._registry.get("mcp_manager") if self._registry.has("mcp_manager") else None
-        model_router = self._registry.get("model_router")
-        provider = self._registry.get("provider")
-
-        if not mcp_manager:
-            yield {"type": "error", "content": "MCP support is not available."}
-            return
-
-        conn = mcp_manager.get_connection(server_id)
-        if not conn or conn.status != "connected":
-            yield {"type": "error", "content": f"MCP server '{server_id}' is not connected."}
-            return
-
-        # Permission check — skip if tool is in auto_approve_tools list
-        auto_approved = set(conn.config.auto_approve_tools)
-        perm = f"mcp:{server_id}:execute"
-        if tool_name not in auto_approved:
-            check = await permissions.check_permission(intent.skill_id, perm)
-            if not check.allowed and check.requires_user_approval:
-                request_id = f"mcp-perm-{server_id}-{id(intent)}"
-                self._session.pending_permission_tasks[request_id] = {
-                    "message": user_message,
-                    "skill_id": intent.skill_id,
-                    "perms_needed": [perm],
-                }
-                yield {
-                    "type": "permission_request",
-                    "request_id": request_id,
-                    "skill_id": intent.skill_id,
-                    "skill_name": f"{conn.config.name}: {tool_name}",
-                    "permissions": [perm],
-                    "is_first_party": False,
-                }
-                return
-
-        # Find the tool schema — strict match, no silent fallback
-        tool_schema = None
-        for tool in conn.tools:
-            if tool["name"] == tool_name:
-                tool_schema = tool
-                break
-
-        if tool_schema is None:
-            available = [t["name"] for t in conn.tools]
-            yield {
-                "type": "error",
-                "content": (
-                    f"Tool '{tool_name}' not found on MCP server '{server_id}'. "
-                    f"Available tools: {', '.join(available)}"
-                ),
-            }
-            return
-
-        yield {
-            "type": "task_started",
-            "task_id": f"mcp-{server_id}-{tool_name}",
-            "skill_id": intent.skill_id,
-            "skill_name": conn.config.name,
-            "action": tool_name,
-        }
-
-        try:
-            # Use LLM to extract structured arguments from natural language
-            input_schema = tool_schema.get("inputSchema", {})
-            required_fields = input_schema.get("required", [])
-            model = await model_router.resolve_model()
-
-            arg_prompt = (
-                f'User: "{user_message}"\n'
-                f"Tool: {tool_name}\n"
-                f"Schema: {json.dumps(input_schema)}\n\n"
-                f"Extract arguments as JSON. Reply with ONLY valid JSON."
-            )
-
-            arg_result = await provider.complete(
-                model=model,
-                messages=[{"role": "user", "content": arg_prompt}],
-                system="Extract tool arguments from the user's request. Reply with ONLY valid JSON matching the schema.",
-                max_tokens=500,
-            )
-            self._session.track_llm_usage(arg_result.tokens_in, arg_result.tokens_out)
-
-            raw_args = arg_result.text.strip()
-            if raw_args.startswith("```"):
-                import re as _re
-                raw_args = _re.sub(r"^```\w*\n?", "", raw_args)
-                raw_args = _re.sub(r"\n?```$", "", raw_args).strip()
-
-            arguments = json.loads(raw_args)
-
-            # Validate required fields are present
-            if required_fields:
-                missing = [f for f in required_fields if f not in arguments]
-                if missing:
-                    yield {
-                        "type": "error",
-                        "content": f"Missing required arguments for {tool_name}: {', '.join(missing)}",
-                    }
-                    return
-
-            # Validate argument types against schema properties
-            schema_props = input_schema.get("properties", {})
-            for key, value in list(arguments.items()):
-                if key not in schema_props:
-                    del arguments[key]
-                    logger.debug("Stripped unknown arg '%s' from MCP tool call %s", key, tool_name)
-
-            # Call the MCP tool
-            result = await mcp_manager.call_tool(server_id, tool_name, arguments)
-
-            if result.get("isError"):
-                yield {
-                    "type": "task_failed",
-                    "task_id": f"mcp-{server_id}-{tool_name}",
-                    "error": result.get("content", "MCP tool call failed"),
-                }
-                yield {"type": "error", "content": result.get("content", "MCP tool call failed")}
-            else:
-                content = result.get("content", "")
-                yield {
-                    "type": "task_completed",
-                    "task_id": f"mcp-{server_id}-{tool_name}",
-                    "result": {"summary": content[:500]},
-                }
-                yield {
-                    "type": "response",
-                    "content": content,
-                    "tokens_in": arg_result.tokens_in,
-                    "tokens_out": arg_result.tokens_out,
-                    "model": model,
-                }
-
-        except json.JSONDecodeError as e:
-            yield {"type": "error", "content": f"Failed to parse tool arguments: {e}"}
-        except ConnectionError as e:
-            yield {"type": "error", "content": f"MCP connection error: {e}"}
-        except Exception as e:
-            logger.error("MCP tool call failed: %s", e, exc_info=True)
-            yield {"type": "error", "content": f"MCP tool call failed: {e}"}
 
     async def handle_multi_delegated(
         self, user_message: str, intent,
@@ -468,11 +328,7 @@ class SkillDispatcher:
                     yield event
 
         self._session.executing_plan = False
-        while not self._session.steering_queue.empty():
-            try:
-                self._session.steering_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        self._session.drain_steering_queue()
 
         # -- Final summary + history --
         succeeded = sum(1 for r in results.values() if r.get("status") == "completed")
@@ -494,9 +350,5 @@ class SkillDispatcher:
             summary = r.get("summary", r.get("error", ""))
             parts.append(f"- {st.skill_id}: {status}" + (f" — {summary}" if summary else ""))
         composite = "\n".join(parts)
-        self._session.conversation_history.append({
-            "role": "assistant",
-            "content": composite,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        await self._session.add_message("assistant", composite)
         await compaction.incremental_compact(self._session.conversation_history)

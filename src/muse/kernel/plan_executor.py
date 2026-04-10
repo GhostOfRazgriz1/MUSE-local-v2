@@ -45,6 +45,42 @@ class PlanExecutor:
         self._session = session
 
     # ------------------------------------------------------------------
+    # Shared helpers
+
+    @staticmethod
+    def _build_sub_tasks_from_steps(step_list: list[dict]) -> list:
+        """Convert plan step dicts to SubTask objects with validated deps."""
+        st_list = []
+        for s in step_list:
+            deps = s.get("depends_on", [])
+            deps = [d for d in deps if isinstance(d, int) and 0 <= d < len(step_list)]
+            st_list.append(SubTask(
+                skill_id=s.get("skill_id", ""),
+                instruction=s.get("instruction", ""),
+                action=s.get("action"),
+                depends_on=deps,
+                iteration_group=s.get("iteration_group"),
+                iteration_role=s.get("iteration_role"),
+            ))
+        return st_list
+
+    @staticmethod
+    def _format_plan_display(
+        steps: list[dict],
+        include_action: bool = False,
+        instruction_limit: int = 60,
+    ) -> str:
+        """Format plan steps as a user-facing display string."""
+        lines = []
+        for i, s in enumerate(steps):
+            line = f"  {i+1}. **{s.get('skill_id', '?')}**"
+            if include_action and s.get("action"):
+                line += f".{s['action']}"
+            line += f" — {s.get('instruction', '')[:instruction_limit]}"
+            lines.append(line)
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
     # Result relevance validation
     # ------------------------------------------------------------------
 
@@ -125,12 +161,7 @@ class PlanExecutor:
         remaining steps rewritten) or ``None`` if no steering was queued.
         """
         # Drain all pending steering messages
-        steering_msgs: list[str] = []
-        while not self._session.steering_queue.empty():
-            try:
-                steering_msgs.append(self._session.steering_queue.get_nowait())
-            except asyncio.QueueEmpty:
-                break
+        steering_msgs = self._session.drain_steering_queue()
         if not steering_msgs:
             return None
 
@@ -304,12 +335,7 @@ class PlanExecutor:
                            skills=[s.get("skill_id", "?") for s in steps])
 
         # ── Step 2: Show plan and ask for confirmation ──────────
-        plan_display = "\n".join(
-            f"  {i+1}. **{s.get('skill_id', '?')}**"
-            f"{('.' + s['action']) if s.get('action') else ''}"
-            f" — {s.get('instruction', '')[:80]}"
-            for i, s in enumerate(steps)
-        )
+        plan_display = self._format_plan_display(steps, include_action=True, instruction_limit=80)
 
         # ── Step 2b: Permission pre-check for ALL skills in the plan ──
         # Collect unique skills and check permissions upfront so the user
@@ -372,22 +398,7 @@ class PlanExecutor:
         # re-plan between steps, which rebuilds the sub-task list and
         # waves while preserving already-completed results.
 
-        def _build_sub_tasks(step_list):
-            st_list = []
-            for s in step_list:
-                deps = s.get("depends_on", [])
-                deps = [d for d in deps if isinstance(d, int) and 0 <= d < len(step_list)]
-                st_list.append(SubTask(
-                    skill_id=s.get("skill_id", ""),
-                    instruction=s.get("instruction", ""),
-                    action=s.get("action"),
-                    depends_on=deps,
-                    iteration_group=s.get("iteration_group"),
-                    iteration_role=s.get("iteration_role"),
-                ))
-            return st_list
-
-        sub_tasks = _build_sub_tasks(steps)
+        sub_tasks = self._build_sub_tasks_from_steps(steps)
         iteration_groups = parse_iteration_groups(
             sub_tasks,
             max_attempts=config.autonomous.goal_iteration_max_attempts,
@@ -591,10 +602,7 @@ class PlanExecutor:
                                         (json.dumps(steps), datetime.now(timezone.utc).isoformat(), plan_id),
                                     )
                                     await db.commit()
-                                    plan_display = "\n".join(
-                                        f"  {i+1}. **{s.get('skill_id', '?')}** — {s.get('instruction', '')[:60]}"
-                                        for i, s in enumerate(steps)
-                                    )
+                                    plan_display = self._format_plan_display(steps)
                                     yield {
                                         "type": "plan_rewritten",
                                         "content": f"Plan revised:\n\n{plan_display}",
@@ -636,11 +644,10 @@ class PlanExecutor:
                                     f"Plan paused. Say 'continue' to retry from this step."
                                 ),
                             }
-                            self._session.conversation_history.append({
-                                "role": "assistant",
-                                "content": f"[Plan paused at step {idx + 1}/{len(steps)}]",
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            })
+                            await self._session.add_message(
+                                "assistant",
+                                f"[Plan paused at step {idx + 1}/{len(steps)}]",
+                            )
                             await compaction.incremental_compact(self._session.conversation_history)
                             return
 
@@ -661,10 +668,7 @@ class PlanExecutor:
                                 (json.dumps(steps), datetime.now(timezone.utc).isoformat(), plan_id),
                             )
                             await db.commit()
-                            plan_display = "\n".join(
-                                f"  {i+1}. **{s.get('skill_id', '?')}** — {s.get('instruction', '')[:60]}"
-                                for i, s in enumerate(steps)
-                            )
+                            plan_display = self._format_plan_display(steps)
                             yield {
                                 "type": "plan_rewritten",
                                 "content": f"Plan revised:\n\n{plan_display}",
@@ -679,11 +683,7 @@ class PlanExecutor:
         finally:
             self._session.executing_plan = False
             # Drain stale steering messages
-            while not self._session.steering_queue.empty():
-                try:
-                    self._session.steering_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
+            self._session.drain_steering_queue()
 
         # ── Step 5: Plan complete ───────────────────────────────
         await db.execute(
@@ -710,11 +710,10 @@ class PlanExecutor:
             summary = r.get("summary", r.get("error", ""))[:100]
             parts.append(f"- Step {idx+1} ({st.skill_id}): {status}" + (f" — {summary}" if summary else ""))
 
-        self._session.conversation_history.append({
-            "role": "assistant",
-            "content": f"[Goal completed: {user_message[:80]}]\n" + "\n".join(parts),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        await self._session.add_message(
+            "assistant",
+            f"[Goal completed: {user_message[:80]}]\n" + "\n".join(parts),
+        )
         await compaction.incremental_compact(self._session.conversation_history)
 
         get_tracer().event("orchestrator", "plan_completed",
@@ -804,18 +803,7 @@ class PlanExecutor:
         await db.commit()
 
         # Build SubTasks and resume from current_step
-        sub_tasks = []
-        for s in steps:
-            deps = s.get("depends_on", [])
-            deps = [d for d in deps if isinstance(d, int) and 0 <= d < len(steps)]
-            sub_tasks.append(SubTask(
-                skill_id=s.get("skill_id", ""),
-                instruction=s.get("instruction", ""),
-                action=s.get("action"),
-                depends_on=deps,
-                iteration_group=s.get("iteration_group"),
-                iteration_role=s.get("iteration_role"),
-            ))
+        sub_tasks = self._build_sub_tasks_from_steps(steps)
 
         # Rehydrate iteration groups from persisted state
         iteration_groups = parse_iteration_groups(

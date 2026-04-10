@@ -17,6 +17,7 @@ from typing import AsyncIterator
 from muse.debug import get_tracer
 from muse.kernel.service_registry import ServiceRegistry
 from muse.kernel.session_store import SessionStore
+from muse.kernel.task_tracker import BackgroundTaskTracker
 
 logger = logging.getLogger(__name__)
 
@@ -148,18 +149,15 @@ class InlineHandler:
                      tokens_in=tokens_in, tokens_out=tokens_out)
 
         if not session_id or session_id == self._session.session_id:
-            self._session.conversation_history.append({
-                "role": "assistant",
-                "content": response_text,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            await self._session.add_message("assistant", response_text)
             await compaction.incremental_compact(self._session.conversation_history)
 
-        asyncio.create_task(self._persist_and_demote(
+        bg: BackgroundTaskTracker = self._registry.get("bg_tasks")
+        bg.spawn(self._persist_and_demote(
             response_text, model,
             tokens_in=tokens_in, tokens_out=tokens_out,
             session_id=session_id,
-        ))
+        ), name="persist_inline")
 
         yield {
             "type": "response",
@@ -233,11 +231,7 @@ class InlineHandler:
 
         # Record in conversation history
         identity_msg = f"[Identity updated per user request: {user_message}]"
-        self._session.conversation_history.append({
-            "role": "assistant",
-            "content": identity_msg,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        await self._session.add_message("assistant", identity_msg)
         await compaction.incremental_compact(self._session.conversation_history)
         if self._session.session_id:
             await session_repo.add_message(

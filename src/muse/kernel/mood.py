@@ -7,6 +7,8 @@ downgraded to "neutral" unless forced.
 
 from __future__ import annotations
 
+import asyncio
+
 from muse.kernel.message_bus import MessageBus
 from muse.kernel.session_store import SessionStore
 
@@ -24,6 +26,7 @@ class MoodService:
     def __init__(self, session: SessionStore, event_bus: MessageBus) -> None:
         self._session = session
         self._event_bus = event_bus
+        self._lock = asyncio.Lock()
 
     @property
     def current(self) -> str:
@@ -35,13 +38,14 @@ class MoodService:
         If *force* is False, a lower-priority mood won't override a
         higher-priority one (e.g. 'neutral' won't replace 'working').
         """
-        current = self._session.mood
-        if mood == current:
-            return
-        if not force:
-            current_pri = MOOD_PRIORITY.get(current, 1)
-            new_pri = MOOD_PRIORITY.get(mood, 1)
-            if new_pri < current_pri and current in ("working", "dreaming"):
+        async with self._lock:
+            current = self._session.mood
+            if mood == current:
                 return
-        self._session.mood = mood
+            if not force:
+                current_pri = MOOD_PRIORITY.get(current, 1)
+                new_pri = MOOD_PRIORITY.get(mood, 1)
+                if new_pri < current_pri and current in ("working", "dreaming"):
+                    return
+            self._session.mood = mood
         await self._event_bus.emit({"type": "mood_changed", "mood": mood})

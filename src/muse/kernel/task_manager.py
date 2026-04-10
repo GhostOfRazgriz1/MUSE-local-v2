@@ -192,6 +192,20 @@ class TaskManager:
         """Return all currently active tasks."""
         return list(self._active_tasks.values())
 
+    async def cleanup_stale_tasks(self, max_age_seconds: float = 600) -> int:
+        """Kill tasks that have been active longer than *max_age_seconds*."""
+        now = datetime.now(timezone.utc)
+        stale = []
+        for tid, task in self._active_tasks.items():
+            created = datetime.fromisoformat(task.created_at)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if (now - created).total_seconds() > max_age_seconds:
+                stale.append(tid)
+        for tid in stale:
+            await self.kill(tid, reason="stale_timeout")
+        return len(stale)
+
     async def get_task(self, task_id: str) -> TaskInfo | None:
         """Get task info from active tasks or database."""
         if task_id in self._active_tasks:

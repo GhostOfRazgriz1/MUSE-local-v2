@@ -365,3 +365,11 @@ class MemoryRepository:
         cursor = await self._db.execute(sql, (session_id,))
         await self._db.commit()
         return cursor.rowcount
+
+    async def set_relevance_score(self, entry_id: int, score: float) -> None:
+        """Update the relevance score for a single entry."""
+        await self._db.execute(
+            "UPDATE memory_entries SET relevance_score = ? WHERE id = ?",
+            (score, entry_id),
+        )
+        await self._db.commit()

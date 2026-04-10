@@ -1,0 +1,27 @@
+{
+    "name": "MCP Install",
+    "version": "0.1.0",
+    "description": "Install MCP servers from a GitHub URL or search for MCP tools to extend the agent's capabilities. Use when the user wants to add new tools, connect external services, or asks about available MCP servers.",
+    "category": "system",
+    "author": "MUSE",
+    "permissions": ["web:fetch"],
+    "memory_namespaces": [],
+    "allowed_domains": [
+        "raw.githubusercontent.com",
+        "api.github.com",
+        "github.com"
+    ],
+    "actions": [
+        {"id": "install", "description": "Install an MCP server from a GitHub URL"},
+        {"id": "search", "description": "Search for available MCP servers to install"}
+    ],
+    "max_tokens": 4000,
+    "timeout_seconds": 60,
+    "isolation_tier": "lightweight",
+    "entry_point": "skill.py",
+    "is_first_party": true,
+    "supports_rollback": false,
+    "idempotent": true,
+    "needs_conversation_context": false,
+    "planner_hint": "Use when the user wants to install an MCP server, add new tools, or search for available MCP extensions."
+}

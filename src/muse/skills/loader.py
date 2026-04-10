@@ -21,6 +21,9 @@ _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+")
 _SAFE_ENTRY_POINT = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9_ -]*\.py$")
 
 
+_MAX_MANIFEST_CACHE = 100
+
+
 class SkillLoader:
     """Manages skill installation, updates, and removal."""
 
@@ -29,6 +32,11 @@ class SkillLoader:
         self._skills_dir = skills_dir
         self._manifest_cache: dict[str, SkillManifest | None] = {}
         self._audit = audit_repo
+        self._mcp_manager: object | None = None
+
+    def set_mcp_manager(self, mcp_manager: object) -> None:
+        """Inject MCP manager so we can build synthetic manifests."""
+        self._mcp_manager = mcp_manager
 
     # ------------------------------------------------------------------
     # Public API
@@ -106,17 +114,54 @@ class SkillLoader:
         return results
 
     async def get_manifest(self, skill_id: str) -> SkillManifest | None:
-        """Return the manifest for an installed skill, or ``None`` (cached)."""
+        """Return the manifest for an installed skill, or ``None`` (cached).
+
+        MCP virtual skills (``mcp:<server_id>``) get a synthetic manifest
+        generated from the MCP connection metadata.
+        """
         if skill_id in self._manifest_cache:
             return self._manifest_cache[skill_id]
+
+        # MCP virtual skills — build a synthetic manifest
+        if skill_id.startswith("mcp:"):
+            result = self._build_mcp_manifest(skill_id)
+            if result:
+                self._manifest_cache[skill_id] = result
+            return result
+
         cursor = await self._db.execute(
             "SELECT manifest_json FROM installed_skills WHERE skill_id = ?",
             (skill_id,),
         )
         row = await cursor.fetchone()
         result = SkillManifest.from_json(json.loads(row[0])) if row else None
+        if len(self._manifest_cache) >= _MAX_MANIFEST_CACHE:
+            # Evict oldest entry (first inserted)
+            oldest = next(iter(self._manifest_cache))
+            del self._manifest_cache[oldest]
         self._manifest_cache[skill_id] = result
         return result
+
+    def _build_mcp_manifest(self, skill_id: str) -> SkillManifest | None:
+        """Generate a synthetic SkillManifest for an MCP virtual skill."""
+        if not self._mcp_manager:
+            return None
+        server_id = skill_id.removeprefix("mcp:")
+        conn = self._mcp_manager.get_connection(server_id)
+        if not conn:
+            return None
+        return SkillManifest(
+            name=conn.config.name,
+            version="0.0.0",
+            description=f"MCP server: {conn.config.name}",
+            author="mcp",
+            permissions=[f"mcp:{server_id}:execute"],
+            isolation_tier="lightweight",
+            is_first_party=False,
+            needs_conversation_context=False,
+            timeout_seconds=60,
+            max_tokens=2000,
+        )
 
     async def update_skill(self, skill_id: str, skill_path: Path) -> SkillManifest:
         """Update an already-installed skill from a new source path."""

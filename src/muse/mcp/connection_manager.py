@@ -5,15 +5,76 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import shutil
+import sys
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 import aiosqlite
 
 from muse.mcp.config import MCPServerConfig
 
 logger = logging.getLogger(__name__)
+
+# ── Command resolution ───────────────────────────────────────────────
+# MCP server configs store bare commands like "python" or "npx".
+# We resolve these to the project's own .venv / node_modules so we
+# don't depend on whatever happens to be on the system PATH.
+
+def _project_root() -> Path:
+    """Best-effort project root: walk up from this file to find pyproject.toml."""
+    p = Path(__file__).resolve()
+    for parent in p.parents:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return Path.cwd()
+
+def _resolve_command(command: str, env: dict[str, str] | None) -> str:
+    """Resolve a bare command name to a concrete path.
+
+    Priority:
+    1. If the command is already an absolute path, use it as-is.
+    2. For ``python`` / ``python3``: use the project venv interpreter.
+    3. For ``node`` / ``npx``: check ``frontend/node_modules/.bin`` first,
+       then fall back to system PATH.
+    4. Otherwise, fall back to shutil.which (system PATH).
+    """
+    # Already absolute or contains path separators — trust it
+    if os.path.isabs(command) or os.sep in command or "/" in command:
+        return command
+
+    root = _project_root()
+
+    # Python — prefer the project venv
+    if command in ("python", "python3", "python.exe", "python3.exe"):
+        if sys.platform == "win32":
+            venv_python = root / ".venv" / "Scripts" / "python.exe"
+        else:
+            venv_python = root / ".venv" / "bin" / "python3"
+        if venv_python.exists():
+            logger.debug("Resolved %s → %s", command, venv_python)
+            return str(venv_python)
+
+    # Node / npx — prefer frontend/node_modules/.bin
+    if command in ("node", "npx", "node.exe", "npx.exe", "npx.cmd"):
+        suffix = ".cmd" if sys.platform == "win32" else ""
+        base = command.removesuffix(".exe").removesuffix(".cmd")
+        local_bin = root / "frontend" / "node_modules" / ".bin" / f"{base}{suffix}"
+        if local_bin.exists():
+            logger.debug("Resolved %s → %s", command, local_bin)
+            return str(local_bin)
+
+    # Generic fallback — search PATH (including env overrides)
+    path_env = env.get("PATH", os.environ.get("PATH", "")) if env else None
+    resolved = shutil.which(command, path=path_env)
+    if resolved:
+        return resolved
+
+    # Give up — return the bare command and let the OS try
+    return command
 
 # Reconnect settings
 _RECONNECT_BASE = 2
@@ -210,8 +271,15 @@ class MCPConnectionManager:
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
+        resolved_cmd = _resolve_command(config.command, config.env)
+        if resolved_cmd != config.command:
+            logger.info(
+                "MCP %s: resolved command %r → %s",
+                config.server_id, config.command, resolved_cmd,
+            )
+
         params = StdioServerParameters(
-            command=config.command,
+            command=resolved_cmd,
             args=config.args,
             env=config.env or None,
         )

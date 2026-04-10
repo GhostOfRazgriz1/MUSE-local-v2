@@ -117,11 +117,7 @@ class PermissionGate:
 
             # Record the denial in conversation history and persist to DB
             deny_msg = f"[Permission denied for {skill_id} — request was not executed: {msg}]"
-            self._session.conversation_history.append({
-                "role": "assistant",
-                "content": deny_msg,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            await self._session.add_message("assistant", deny_msg, event_type="permission_denied")
             if self._session.session_id:
                 try:
                     await session_repo.add_message(

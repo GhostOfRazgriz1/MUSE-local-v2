@@ -239,6 +239,7 @@ class Kernel:
         # ── Event bus (replaces _event_listeners) ────────────────
         from muse.kernel.message_bus import MessageBus
         self._event_bus = MessageBus()
+        self._session.set_event_bus(self._event_bus)
 
         # ── Service registry ─────────────────────────────────────
         from muse.kernel.service_registry import ServiceRegistry
@@ -271,6 +272,17 @@ class Kernel:
             self._registry.register("oauth_manager", oauth_manager)
         if mcp_manager:
             self._registry.register("mcp_manager", mcp_manager)
+            skill_loader.set_mcp_manager(mcp_manager)
+
+        # MCP executor — runs MCP tools through the standard task pipeline
+        from muse.kernel.mcp_executor import MCPExecutor
+        self._mcp_executor = MCPExecutor(self._registry, self._session)
+        self._registry.register("mcp_executor", self._mcp_executor)
+
+        # Background task tracker (replaces bare asyncio.create_task calls)
+        from muse.kernel.task_tracker import BackgroundTaskTracker
+        self._bg_tasks = BackgroundTaskTracker("kernel")
+        self._registry.register("bg_tasks", self._bg_tasks)
 
         # Usage pattern tracking
         self._patterns = PatternTracker(memory_repo)
@@ -600,7 +612,7 @@ class Kernel:
         await self._trust_budget.reset_expired_periods()
 
         # Start periodic cache flush
-        asyncio.create_task(self._periodic_cache_flush())
+        self._bg_tasks.spawn(self._periodic_cache_flush(), name="cache_flush")
 
         # Start memory consolidation ("dreaming") background task
         self._dreaming.start()
@@ -1066,9 +1078,9 @@ class Kernel:
         })
 
         # Persist to DB using the frozen session_id
-        asyncio.create_task(self._persist_message_and_title(
+        self._bg_tasks.spawn(self._persist_message_and_title(
             user_message, session_id=frozen_session_id,
-        ))
+        ), name="persist_user_msg")
 
         # Lightweight emotion analysis (no LLM call — just pattern matching)
         # Also sets the agent's visible mood based on the user's emotional signal.
@@ -1076,11 +1088,17 @@ class Kernel:
         try:
             signal = self._emotions.analyze_message(user_message)
             if signal:
-                asyncio.create_task(self._emotions.persist_signal(signal))
+                self._bg_tasks.spawn(
+                    self._emotions.persist_signal(signal),
+                    name="persist_emotion",
+                )
                 # Notify recipe engine of emotional change
-                asyncio.create_task(self._recipe_engine.on_emotion_change(
-                    signal.valence, signal.emotion,
-                ))
+                self._bg_tasks.spawn(
+                    self._recipe_engine.on_emotion_change(
+                        signal.valence, signal.emotion,
+                    ),
+                    name="recipe_emotion",
+                )
                 # Map user emotion → agent mood
                 _EMOTION_TO_MOOD = {
                     "excitement": "excited", "accomplishment": "excited",
@@ -1184,7 +1202,8 @@ class Kernel:
                     )
                     self._last_delegated_message = user_message
                     async for event in self._handle_delegated(
-                        user_message, intent, history_snapshot,
+                        user_message, intent,
+                        history_snapshot=history_snapshot,
                         precomputed_embedding=precomputed_embedding,
                         session_id=frozen_session_id,
                     ):
@@ -1204,7 +1223,8 @@ class Kernel:
                     )
                     self._last_delegated_message = user_message
                     async for event in self._handle_delegated(
-                        user_message, intent, history_snapshot,
+                        user_message, intent,
+                        history_snapshot=history_snapshot,
                         precomputed_embedding=precomputed_embedding,
                         session_id=frozen_session_id,
                     ):
@@ -1331,11 +1351,6 @@ class Kernel:
     async def _handle_delegated(self, user_message, intent, **kwargs) -> AsyncIterator[dict]:
         """Delegate to SkillDispatcher."""
         async for event in self._skill_dispatcher.handle_delegated(user_message, intent, **kwargs):
-            yield event
-
-    async def _handle_mcp_tool_call(self, user_message, intent) -> AsyncIterator[dict]:
-        """Delegate to SkillDispatcher."""
-        async for event in self._skill_dispatcher.handle_mcp_tool_call(user_message, intent):
             yield event
 
     async def _handle_multi_delegated(self, user_message, intent, **kwargs) -> AsyncIterator[dict]:
@@ -1475,11 +1490,7 @@ class Kernel:
 
         # Record in conversation history and persist to DB
         cancel_msg = f"[{skill_name} was cancelled by the user]"
-        self._conversation_history.append({
-            "role": "assistant",
-            "content": cancel_msg,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        await self._session.add_message("assistant", cancel_msg)
         if self._session_id:
             try:
                 await self._session_repo.add_message(

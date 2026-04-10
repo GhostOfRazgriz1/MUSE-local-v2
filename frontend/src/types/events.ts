@@ -142,6 +142,15 @@ export type ChatEvent =
       type: "history";
       session_id: string;
       messages: HistoryMessage[];
+    }
+  | {
+      type: "state_sync";
+      session_id: string;
+      mood: string;
+      executing_plan: boolean;
+      active_task_count: number;
+      pending_permission_count: number;
+      token_usage: { tokens_in: number; tokens_out: number };
     };
 
 export interface TaskInfo {

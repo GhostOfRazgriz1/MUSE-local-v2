@@ -823,6 +823,57 @@ class LocalBridge:
                     success=False, result=None, error=str(e),
                 ))
 
+        elif msg_type == "gateway_call":
+            # Internal API call — only allowed for first-party skills.
+            # Bypasses SSRF protection by routing through the orchestrator.
+            if not self._orch:
+                await self._pending_response.put(_Response(
+                    success=False, result=None,
+                    error="gateway_call requires LocalBridge (first-party only)",
+                ))
+                return
+
+            endpoint = getattr(message, "endpoint", "")
+            method = getattr(message, "method", "POST")
+            payload = getattr(message, "payload", None)
+
+            try:
+                if endpoint == "mcp/register":
+                    import json as _json
+                    config_data = _json.loads(payload) if isinstance(payload, str) else payload
+                    mcp_manager = self._orch._registry.get("mcp_manager") if self._orch._registry.has("mcp_manager") else None
+                    if not mcp_manager:
+                        await self._pending_response.put(_Response(
+                            success=False, result=None,
+                            error="MCP support is not available",
+                        ))
+                        return
+                    from muse.mcp.config import MCPServerConfig
+                    config = MCPServerConfig.from_dict(config_data)
+                    await mcp_manager.add_server(config)
+                    if config.enabled:
+                        await mcp_manager.connect(config.server_id)
+                        await self._orch._register_mcp_tools()
+                    conn = mcp_manager.get_connection(config.server_id)
+                    await self._pending_response.put(_Response(
+                        success=True,
+                        result={
+                            "success": True,
+                            "tool_count": len(conn.tools) if conn else 0,
+                            "connection_status": conn.status if conn else "disconnected",
+                        },
+                    ))
+                else:
+                    await self._pending_response.put(_Response(
+                        success=False, result=None,
+                        error=f"Unknown gateway endpoint: {endpoint}",
+                    ))
+            except Exception as e:
+                await self._pending_response.put(_Response(
+                    success=False, result=None,
+                    error=f"gateway_call failed: {e}",
+                ))
+
         else:
             logger.warning("LocalBridge: unhandled message type %s", msg_type)
 

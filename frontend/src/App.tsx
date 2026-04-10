@@ -41,8 +41,10 @@ function App() {
 
   // Connect WebSocket immediately — don't wait for the provider check.
   // The greeting will still arrive while the setup card renders if needed.
-  const { sendMessage, sendRaw, connected, events, sessionId, historyMessages, backgroundNotifications, clearBackgroundNotification } =
+  const { sendMessage, sendRaw, connected, events, sessionId, historyMessages, pendingInteractions: _pendingInteractions, backgroundNotifications, clearBackgroundNotification } =
     useWebSocket(requestedSessionId, reconnectToken, needsSetup === true);
+  // TODO: pass _pendingInteractions to ChatStream to prevent double-submission of permission responses
+  void _pendingInteractions;
   const [view, setView] = useState<View>("chat");
   const [sidebarOpen, setSidebarOpen] = useState(true); // open by default on desktop
   const [taskPopoverOpen, setTaskPopoverOpen] = useState(false);
@@ -117,6 +119,10 @@ function App() {
       if (!persistent.has(last.mood)) {
         moodDecayRef.current = setTimeout(() => setAgentMood("neutral"), 60_000);
       }
+    }
+    // Server-authoritative state reconciliation on (re)connect
+    if (last && last.type === "state_sync") {
+      setAgentMood((last as any).mood);
     }
   }, [events]);
 
@@ -216,6 +222,7 @@ function App() {
     setRequestedSessionId(id);
     setMessages([]);
     setSessionTitle("");
+    setAgentMood("resting");
     setView("chat");
     // On mobile, close sidebar after selecting
     if (window.innerWidth < 768) setSidebarOpen(false);

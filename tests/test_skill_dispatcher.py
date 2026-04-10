@@ -92,6 +92,8 @@ def _build_session():
     session.executing_plan = False
     session.steering_queue = asyncio.Queue()
     session.conversation_history = []
+    session.add_message = AsyncMock()
+    session.drain_steering_queue = MagicMock(return_value=[])
     return session
 
 
@@ -189,32 +191,9 @@ class TestHandleDelegated:
 
 class TestMCPRouting:
     @pytest.mark.asyncio
-    async def test_mcp_prefix_routes_to_mcp_handler(self):
-        """skill_id starting with 'mcp:' routes through handle_mcp_tool_call."""
+    async def test_mcp_prefix_routes_through_unified_pipeline(self):
+        """skill_id starting with 'mcp:' flows through skill_executor (unified pipeline)."""
         registry = _build_registry()
-
-        # Register MCP manager with a connected server
-        # MCP manager uses sync get_connection but async call_tool
-        mcp_manager = MagicMock()
-        conn = MagicMock()
-        conn.status = "connected"
-        conn.config.name = "TestMCP"
-        conn.config.auto_approve_tools = []
-        conn.tools = [{"name": "get_time", "description": "Get current time", "inputSchema": {"type": "object", "properties": {}}}]
-        mcp_manager.get_connection.return_value = conn
-        mcp_manager.call_tool = AsyncMock(return_value={"content": "2026-04-08T12:00:00Z"})
-        mcp_manager.has = MagicMock(return_value=True)
-        registry.register("mcp_manager", mcp_manager)
-
-        # Provider for argument extraction
-        from conftest import MockLLMProvider
-        provider = MockLLMProvider()
-        provider.set_default_response('{}')
-        registry.register("provider", provider)
-
-        model_router = AsyncMock()
-        model_router.resolve_model.return_value = "mock/test-model"
-        registry.register("model_router", model_router)
 
         session = _build_session()
         session.track_llm_usage = MagicMock()
@@ -228,10 +207,11 @@ class TestMCPRouting:
             "what time is it", intent,
         ))
 
+        # MCP now flows through the same skill_executor.execute() as regular skills
         types = [e["type"] for e in events]
         assert "response" in types
         response = next(e for e in events if e["type"] == "response")
-        assert "2026-04-08" in response["content"]
+        assert "mcp:time" in response["content"]
 
 
 # ── Multi-task delegation ──────────────────────────────────────────────
@@ -487,7 +467,7 @@ class TestConversationHistory:
             "find A and B", intent,
         ))
 
-        assert len(session.conversation_history) == 1
-        entry = session.conversation_history[0]
-        assert entry["role"] == "assistant"
-        assert "search" in entry["content"].lower()
+        session.add_message.assert_called_once()
+        call_args = session.add_message.call_args
+        assert call_args[0][0] == "assistant"
+        assert "search" in call_args[0][1].lower()

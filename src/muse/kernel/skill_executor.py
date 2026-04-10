@@ -229,25 +229,37 @@ class SkillExecutor:
             instruction = before_result.modified_instruction
             brief["instruction"] = instruction
 
-        # -- Execute in sandbox --
+        # -- Execute (sandbox or MCP) --
         try:
-            await sandbox.execute(
-                task_id=task.id,
-                skill_id=skill_id,
-                manifest=manifest,
-                brief=brief,
-                permissions=granted_perms,
-                config={
-                    "gateway_url": f"http://{config.gateway.host}:{config.gateway.port}",
-                    "sandbox_dir": str(config.skills_dir / skill_id / "sandbox"),
-                    "timeout_seconds": manifest.timeout_seconds,
-                    "model": model,
-                    "autonomous": {
-                        "max_attempts": config.autonomous.max_attempts,
-                        "default_token_budget": config.autonomous.default_token_budget,
+            if skill_id.startswith("mcp:"):
+                # MCP tools run through MCPExecutor instead of the sandbox
+                mcp_executor = self._registry.get("mcp_executor")
+                server_id = skill_id.removeprefix("mcp:")
+                await mcp_executor.execute(
+                    server_id=server_id,
+                    tool_name=action or intent.action,
+                    user_message=instruction,
+                    task_id=task.id,
+                    session_id=session_id,
+                )
+            else:
+                await sandbox.execute(
+                    task_id=task.id,
+                    skill_id=skill_id,
+                    manifest=manifest,
+                    brief=brief,
+                    permissions=granted_perms,
+                    config={
+                        "gateway_url": f"http://{config.gateway.host}:{config.gateway.port}",
+                        "sandbox_dir": str(config.skills_dir / skill_id / "sandbox"),
+                        "timeout_seconds": manifest.timeout_seconds,
+                        "model": model,
+                        "autonomous": {
+                            "max_attempts": config.autonomous.max_attempts,
+                            "default_token_budget": config.autonomous.default_token_budget,
+                        },
                     },
-                },
-            )
+                )
 
             completed_task = await task_manager.await_task(
                 task.id, timeout=manifest.timeout_seconds,
@@ -298,11 +310,7 @@ class SkillExecutor:
                     await self.install_authored_skill(result_data)
 
                 if record_history and (not session_id or session_id == self._session.session_id):
-                    self._session.conversation_history.append({
-                        "role": "assistant",
-                        "content": summary,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    })
+                    await self._session.add_message("assistant", summary)
                     await compaction.incremental_compact(self._session.conversation_history)
 
                     # Level 1: Post-task suggestion
@@ -321,17 +329,19 @@ class SkillExecutor:
                         logger.debug("Post-task suggestion failed: %s", e)
 
                     # Notify recipe engine of task completion
-                    asyncio.create_task(recipe_engine.on_post_task(
+                    bg = self._registry.get("bg_tasks")
+                    bg.spawn(recipe_engine.on_post_task(
                         skill_id, action, summary,
-                    ))
+                    ), name="recipe_post_task")
 
-                asyncio.create_task(self.persist_and_absorb_task(
+                bg = self._registry.get("bg_tasks")
+                bg.spawn(self.persist_and_absorb_task(
                     task.id, skill_id, manifest.name, instruction,
                     summary, completed_task.result,
                     tokens_in=completed_task.tokens_in,
                     tokens_out=completed_task.tokens_out,
                     session_id=session_id,
-                ))
+                ), name="persist_absorb")
                 # Revert from "working" but preserve emotional moods.
                 if self._session.mood == "working":
                     await mood_service.set("neutral", force=True)
@@ -349,11 +359,7 @@ class SkillExecutor:
                 if record_history and _sid:
                     error_summary = f"Task failed ({manifest.name}): {error_msg}"
                     if not session_id or session_id == self._session.session_id:
-                        self._session.conversation_history.append({
-                            "role": "assistant",
-                            "content": error_summary,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        })
+                        await self._session.add_message("assistant", error_summary)
                     try:
                         await session_repo.add_message(
                             _sid, "assistant", error_summary,

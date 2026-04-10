@@ -201,6 +201,23 @@ class SkillInvokeMsg:
         })
 
 
+@dataclass
+class GatewayCallMsg:
+    """Call an internal gateway endpoint through the IPC bridge."""
+    request_id: str
+    endpoint: str
+    method: str = "POST"
+    payload: str | None = None
+    type: str = "gateway_call"
+
+    def to_json(self) -> str:
+        return json.dumps({
+            "type": self.type, "request_id": self.request_id,
+            "endpoint": self.endpoint, "method": self.method,
+            "payload": self.payload,
+        })
+
+
 # --- Generic response from orchestrator ---
 
 @dataclass
