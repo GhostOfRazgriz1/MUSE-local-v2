@@ -28,11 +28,20 @@ async def list_servers():
     servers = []
     for config in configs:
         conn = manager.get_connection(config.server_id)
+        if conn:
+            status = conn.status
+            tool_count = len(conn.tools)
+        elif config.lifecycle == "on_demand":
+            status = "on_demand"
+            tool_count = len(config.cached_tools)
+        else:
+            status = "disconnected"
+            tool_count = 0
         servers.append({
             **config.to_dict(),
-            "status": conn.status if conn else "disconnected",
+            "status": status,
             "error": conn.error if conn else None,
-            "tool_count": len(conn.tools) if conn else 0,
+            "tool_count": tool_count,
         })
     return {"servers": servers}
 
@@ -53,9 +62,12 @@ async def add_server(body: dict):
     config = MCPServerConfig.from_dict(body)
     await manager.add_server(config)
 
-    if config.enabled:
+    if config.enabled and config.lifecycle != "on_demand":
         await manager.connect(server_id)
         await orchestrator._register_mcp_tools()
+    elif config.enabled and config.lifecycle == "on_demand":
+        manager._on_demand_configs[server_id] = config
+        await orchestrator._register_on_demand_mcp_servers()
 
     conn = manager.get_connection(server_id)
     return {

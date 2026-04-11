@@ -40,6 +40,16 @@ class MCPServerConfig:
     #   "auto"   — enrich if output looks like raw data (default)
     enrichment_mode: str = "auto"
 
+    # Lifecycle: when the server connects.
+    #   "persistent" — connect on startup, stay alive (default)
+    #   "on_demand"  — connect only when a tool is invoked
+    lifecycle: str = "persistent"
+
+    # Cached tool list from last successful connection.
+    # Used to register on-demand servers with the classifier even when
+    # disconnected.
+    cached_tools: list[dict] = field(default_factory=list)
+
     # Timestamps
     created_at: str = ""
     updated_at: str = ""
@@ -57,6 +67,8 @@ class MCPServerConfig:
             "auto_approve_tools": list(self.auto_approve_tools),
             "context_mode": self.context_mode,
             "enrichment_mode": self.enrichment_mode,
+            "lifecycle": self.lifecycle,
+            "cached_tools": list(self.cached_tools),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -78,6 +90,8 @@ class MCPServerConfig:
             auto_approve_tools=d.get("auto_approve_tools", []),
             context_mode=d.get("context_mode", "instruction"),
             enrichment_mode=d.get("enrichment_mode", "auto"),
+            lifecycle=d.get("lifecycle", "persistent"),
+            cached_tools=d.get("cached_tools", []),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
         )

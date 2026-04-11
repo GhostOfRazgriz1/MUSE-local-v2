@@ -59,7 +59,8 @@ async def _extract_mcp_config(ctx, readme: str, owner: str, repo: str) -> dict |
             f' "env": {{"ENV_VAR": "value or PLACEHOLDER"}},\n'
             f' "url": "only for sse/streamable-http transport",\n'
             f' "context_mode": "none" or "instruction" or "full",\n'
-            f' "enrichment_mode": "always" or "never" or "auto"}}\n\n'
+            f' "enrichment_mode": "always" or "never" or "auto",\n'
+            f' "lifecycle": "persistent" or "on_demand"}}\n\n'
             f"Rules:\n"
             f"- For npx-based servers, use: command=npx, args=[-y, package-name]\n"
             f"- For uvx-based servers, use: command=uvx, args=[package-name, subcommand, ...flags]\n"
@@ -72,6 +73,8 @@ async def _extract_mcp_config(ctx, readme: str, owner: str, repo: str) -> dict |
             f"- context_mode: use 'none' for code/file tools, 'instruction' for search/data tools, 'full' for conversational tools\n"
             f"- enrichment_mode: use 'never' for tools that return code or structured output the user needs raw, "
             f"'always' for search/API tools that return raw data needing summarization, 'auto' if unsure\n"
+            f"- lifecycle: use 'on_demand' for servers that need runtime args like --workspace PATH or project directories, "
+            f"'persistent' for always-available services (search, weather, time)\n"
             f"- Reply with ONLY the JSON object, no markdown fences"
         ),
         system="Extract MCP configuration from the README. Reply with ONLY valid JSON.",
@@ -97,6 +100,12 @@ async def _extract_mcp_config(ctx, readme: str, owner: str, repo: str) -> dict |
             config["context_mode"] = "instruction"
         if config.get("enrichment_mode") not in ("always", "never", "auto"):
             config["enrichment_mode"] = "auto"
+        # Infer lifecycle from PLACEHOLDERs in args
+        if config.get("lifecycle") not in ("persistent", "on_demand"):
+            has_placeholder = any(
+                "PLACEHOLDER" in str(a).upper() for a in config.get("args", [])
+            )
+            config["lifecycle"] = "on_demand" if has_placeholder else "persistent"
         return config
     except json.JSONDecodeError:
         return None
@@ -205,27 +214,41 @@ async def _register_config(ctx, config: dict) -> dict:
     """Prompt for placeholders, register config, return result."""
     name = config.get("name", "MCP server")
 
-    # Prompt for placeholder values inline
+    # Handle placeholder values based on lifecycle mode.
+    # On-demand: convert PLACEHOLDERs to {template} syntax for lazy resolution.
+    # Persistent: prompt the user for values immediately.
+    is_on_demand = config.get("lifecycle") == "on_demand"
     env = config.get("env", {})
     config_args = config.get("args", [])
 
     for key, val in list(env.items()):
         if val == "PLACEHOLDER" or "YOUR_" in str(val).upper():
-            answer = await ctx.user.ask(
-                f"**{name}** needs `{key}`.\nPlease enter the value:"
-            )
-            env[key] = answer.strip()
+            if is_on_demand:
+                env[key] = "{" + key.lower().replace(" ", "_") + "}"
+            else:
+                answer = await ctx.user.ask(
+                    f"**{name}** needs `{key}`.\nPlease enter the value:"
+                )
+                env[key] = answer.strip()
     config["env"] = env
 
     for i, arg in enumerate(config_args):
         if isinstance(arg, str) and ("PLACEHOLDER" in arg.upper() or "YOUR_" in arg.upper()):
             flag_hint = config_args[i - 1] if i > 0 and config_args[i - 1].startswith("-") else None
-            if flag_hint:
-                question = f"**{name}** needs a value for `{flag_hint}`:"
+            if is_on_demand:
+                # Convert to template: --workspace PLACEHOLDER → --workspace {workspace}
+                if flag_hint:
+                    template_name = flag_hint.lstrip("-").replace("-", "_")
+                    config_args[i] = "{" + template_name + "}"
+                else:
+                    config_args[i] = "{arg_" + str(i) + "}"
             else:
-                question = f"**{name}** needs a configuration value (argument {i + 1}):"
-            answer = await ctx.user.ask(question)
-            config_args[i] = answer.strip()
+                if flag_hint:
+                    question = f"**{name}** needs a value for `{flag_hint}`:"
+                else:
+                    question = f"**{name}** needs a configuration value (argument {i + 1}):"
+                answer = await ctx.user.ask(question)
+                config_args[i] = answer.strip()
     config["args"] = config_args
 
     # Register via orchestrator bridge

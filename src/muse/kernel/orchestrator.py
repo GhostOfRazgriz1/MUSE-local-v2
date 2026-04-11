@@ -631,6 +631,7 @@ class Kernel:
             self._mcp_manager._on_tools_changed = self._register_mcp_tools
             await self._mcp_manager.startup()
             await self._register_mcp_tools()
+            await self._register_on_demand_mcp_servers()
 
         logger.info("Orchestrator ready.")
 
@@ -765,6 +766,40 @@ class Kernel:
                 description=f"MCP server: {conn.config.name} ({len(tools)} tools)",
                 actions=actions,
             )
+        await self._rebuild_skills_catalog()
+
+    async def _register_on_demand_mcp_servers(self) -> None:
+        """Register on-demand MCP servers with the classifier using cached tools.
+
+        These servers aren't connected yet, but the classifier needs to
+        know about them so it can route intents to them. When a tool is
+        actually invoked, MCPExecutor handles the lazy connection.
+        """
+        if not self._mcp_manager:
+            return
+
+        for server_id, config in self._mcp_manager.get_on_demand_configs().items():
+            skill_id = f"mcp:{server_id}"
+            actions = []
+            if config.cached_tools:
+                actions = [
+                    {"id": tool["name"], "description": tool.get("description", tool["name"])}
+                    for tool in config.cached_tools
+                ]
+
+            desc = f"MCP server: {config.name}"
+            if actions:
+                desc += f" ({len(actions)} tools, on-demand)"
+            else:
+                desc += " (on-demand, tools discovered on first use)"
+
+            self._classifier.register_skill(
+                skill_id=skill_id,
+                name=config.name,
+                description=desc,
+                actions=actions,
+            )
+
         await self._rebuild_skills_catalog()
 
     async def stop(self) -> None:

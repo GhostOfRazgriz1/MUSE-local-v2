@@ -143,17 +143,30 @@ class SkillLoader:
         return result
 
     def _build_mcp_manifest(self, skill_id: str) -> SkillManifest | None:
-        """Generate a synthetic SkillManifest for an MCP virtual skill."""
+        """Generate a synthetic SkillManifest for an MCP virtual skill.
+
+        Works for both connected and on-demand (disconnected) servers.
+        """
         if not self._mcp_manager:
             return None
         server_id = skill_id.removeprefix("mcp:")
+
+        # Try connected server first
         conn = self._mcp_manager.get_connection(server_id)
-        if not conn:
-            return None
+        if conn:
+            name = conn.config.name
+        else:
+            # On-demand: build from config
+            on_demand = self._mcp_manager.get_on_demand_configs()
+            config = on_demand.get(server_id)
+            if not config:
+                return None
+            name = config.name
+
         return SkillManifest(
-            name=conn.config.name,
+            name=name,
             version="0.0.0",
-            description=f"MCP server: {conn.config.name}",
+            description=f"MCP server: {name}",
             author="mcp",
             permissions=[f"mcp:{server_id}:execute"],
             isolation_tier="lightweight",

@@ -116,6 +116,8 @@ class MCPConnectionManager:
         self._db = db
         self._connections: dict[str, MCPConnection] = {}
         self._reconnect_tasks: dict[str, asyncio.Task] = {}
+        self._on_demand_configs: dict[str, MCPServerConfig] = {}
+        self._connect_locks: dict[str, asyncio.Lock] = {}
         # Callback set by the orchestrator to re-register tools after reconnect
         self._on_tools_changed: object | None = None
 
@@ -124,10 +126,18 @@ class MCPConnectionManager:
     # ------------------------------------------------------------------
 
     async def startup(self) -> None:
-        """Load all enabled servers from DB and connect them."""
+        """Load all enabled servers from DB.
+
+        Persistent servers connect immediately. On-demand servers are
+        stored for later lazy connection.
+        """
         configs = await self.get_servers()
         for config in configs:
-            if config.enabled:
+            if not config.enabled:
+                continue
+            if config.lifecycle == "on_demand":
+                self._on_demand_configs[config.server_id] = config
+            else:
                 await self.connect(config.server_id)
 
     async def shutdown(self) -> None:
@@ -189,6 +199,11 @@ class MCPConnectionManager:
                 "Connected to MCP server %s (%d tools)",
                 server_id, len(conn.tools),
             )
+
+            # Persist tool list so on-demand servers can be registered
+            # with the classifier even when disconnected.
+            await self._update_cached_tools(server_id, conn.tools)
+            self._on_demand_configs.pop(server_id, None)
 
             # Cancel any pending reconnect
             self._cancel_reconnect(server_id)
@@ -272,6 +287,60 @@ class MCPConnectionManager:
 
     def get_all_connections(self) -> dict[str, MCPConnection]:
         return dict(self._connections)
+
+    def get_on_demand_configs(self) -> dict[str, MCPServerConfig]:
+        """Return configs for on-demand servers that are not yet connected."""
+        return dict(self._on_demand_configs)
+
+    async def get_config(self, server_id: str) -> MCPServerConfig | None:
+        """Load server config from DB."""
+        return await self._load_config(server_id)
+
+    async def ensure_connected(
+        self, server_id: str, resolved_args: list[str] | None = None,
+    ) -> MCPConnection:
+        """Ensure a server is connected, connecting on-demand if needed.
+
+        For on-demand servers, optionally accepts *resolved_args* to
+        replace template placeholders in config.args before connecting.
+        """
+        # Fast path: already connected
+        conn = self._connections.get(server_id)
+        if conn and conn.status == "connected":
+            return conn
+
+        # Serialize per-server to avoid concurrent connect() calls
+        if server_id not in self._connect_locks:
+            self._connect_locks[server_id] = asyncio.Lock()
+
+        async with self._connect_locks[server_id]:
+            # Re-check after acquiring lock
+            conn = self._connections.get(server_id)
+            if conn and conn.status == "connected":
+                return conn
+
+            # Load config and optionally override args
+            config = await self._load_config(server_id)
+            if config is None:
+                raise ValueError(f"Unknown MCP server: {server_id}")
+
+            if resolved_args is not None:
+                config.args = resolved_args
+
+            return await self.connect(server_id)
+
+    async def _update_cached_tools(
+        self, server_id: str, tools: list[dict],
+    ) -> None:
+        """Persist the tool list into config_json for classifier registration."""
+        config = await self._load_config(server_id)
+        if config:
+            config.cached_tools = list(tools)
+            await self._db.execute(
+                "UPDATE mcp_servers SET config_json = ? WHERE server_id = ?",
+                (config.to_json(), server_id),
+            )
+            await self._db.commit()
 
     # ------------------------------------------------------------------
     # Transport helpers
@@ -402,4 +471,7 @@ class MCPConnectionManager:
         )
         await self._db.commit()
         if config.enabled:
-            await self.connect(server_id)
+            if config.lifecycle == "on_demand":
+                self._on_demand_configs[server_id] = config
+            else:
+                await self.connect(server_id)

@@ -20,6 +20,7 @@ interface MCPServer {
   tools?: { name: string; description: string }[];
   context_mode?: "none" | "instruction" | "full";
   enrichment_mode?: "always" | "never" | "auto";
+  lifecycle?: "persistent" | "on_demand";
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -27,6 +28,7 @@ const STATUS_LABEL: Record<string, string> = {
   connecting: "Connecting",
   disconnected: "Disconnected",
   error: "Error",
+  on_demand: "On-demand",
 };
 
 /* ─── MCPAddForm ─── */
@@ -281,7 +283,9 @@ function MCPTab() {
                     </div>
                   </div>
                   <div className="mcp-card-right" onClick={(e) => e.stopPropagation()}>
-                    {isConnected ? (
+                    {s.status === "on_demand" ? (
+                      <span className="mcp-on-demand-label">Connects when needed</span>
+                    ) : isConnected ? (
                       <button className="btn btn-ghost btn-sm" onClick={() => handleDisconnect(s.server_id)}>
                         Disconnect
                       </button>
@@ -318,6 +322,28 @@ function MCPTab() {
                     </div>
 
                     <div className="mcp-card-modes">
+                      <div className="mcp-mode-row">
+                        <span className="mcp-config-label">Lifecycle</span>
+                        <div className="mcp-transport-toggle">
+                          {(["persistent", "on_demand"] as const).map((mode) => (
+                            <button
+                              key={mode}
+                              className={`mcp-transport-btn ${(s.lifecycle || "persistent") === mode ? "active" : ""}`}
+                              onClick={async () => {
+                                await apiFetch(`/api/mcp/servers/${s.server_id}`, {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ lifecycle: mode }),
+                                });
+                                fetchServers();
+                              }}
+                              type="button"
+                            >
+                              {mode === "persistent" ? "Always On" : "On Demand"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       <div className="mcp-mode-row">
                         <span className="mcp-config-label">Context injection</span>
                         <div className="mcp-transport-toggle">

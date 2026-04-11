@@ -113,6 +113,79 @@ class MCPExecutor:
             provider, model, user_message, tool_name, raw_content,
         )
 
+    _TEMPLATE_RE = re.compile(r"\{(\w+)\}")
+
+    async def _lazy_connect(self, mcp_manager, server_id, task_manager, task_id):
+        """Attempt on-demand connection, resolving template args."""
+        config = await mcp_manager.get_config(server_id)
+        if config is None:
+            await task_manager.update_status(
+                task_id, "failed",
+                error=f"MCP server '{server_id}' not found in configuration.",
+            )
+            return None
+
+        resolved_args = self._resolve_template_args(config)
+
+        conn = await mcp_manager.ensure_connected(server_id, resolved_args)
+        if conn.status != "connected":
+            await task_manager.update_status(
+                task_id, "failed",
+                error=f"MCP server '{server_id}' failed to connect: {conn.error or 'unknown'}",
+            )
+            return None
+
+        return conn
+
+    def _resolve_template_args(self, config) -> list[str] | None:
+        """Detect {placeholder} patterns in args and try to infer values.
+
+        Returns resolved args list, or None if no templates found.
+        """
+        args = config.args
+        has_templates = any(
+            self._TEMPLATE_RE.search(a) for a in args if isinstance(a, str)
+        )
+        if not has_templates:
+            return None
+
+        resolved = list(args)
+        for i, arg in enumerate(resolved):
+            if not isinstance(arg, str):
+                continue
+            match = self._TEMPLATE_RE.search(arg)
+            if match:
+                placeholder = match.group(1)
+                value = self._infer_template_value(placeholder)
+                if value:
+                    resolved[i] = self._TEMPLATE_RE.sub(value, arg)
+                else:
+                    logger.warning(
+                        "Unresolved template {%s} for MCP server %s",
+                        placeholder, config.server_id,
+                    )
+        return resolved
+
+    def _infer_template_value(self, placeholder: str) -> str | None:
+        """Try to infer a template value from session context."""
+        if placeholder in ("workspace", "project_dir", "project_path", "cwd"):
+            # Look for file paths in recent conversation
+            for msg in reversed(self._session.conversation_history[-10:]):
+                content = msg.get("content", "")
+                # Match Windows and Unix absolute paths
+                path_match = re.search(
+                    r"(?:[A-Z]:\\[\w\\. -]+|/[\w/.-]+)", content,
+                )
+                if path_match:
+                    import os.path
+                    candidate = path_match.group(0)
+                    if os.path.isdir(candidate):
+                        return candidate
+                    parent = os.path.dirname(candidate)
+                    if os.path.isdir(parent):
+                        return parent
+        return None
+
     async def execute(
         self,
         server_id: str,
@@ -136,11 +209,19 @@ class MCPExecutor:
 
         conn = mcp_manager.get_connection(server_id)
         if not conn or conn.status != "connected":
-            await task_manager.update_status(
-                task_id, "failed",
-                error=f"MCP server '{server_id}' is not connected.",
-            )
-            return
+            # Attempt lazy connection for on-demand servers
+            try:
+                conn = await self._lazy_connect(
+                    mcp_manager, server_id, task_manager, task_id,
+                )
+                if not conn:
+                    return  # Error already reported to task_manager
+            except Exception as e:
+                await task_manager.update_status(
+                    task_id, "failed",
+                    error=f"Failed to connect MCP server '{server_id}': {e}",
+                )
+                return
 
         # Find the tool schema
         tool_schema = next(
