@@ -50,7 +50,7 @@ class ExecutionConfig:
     warm_pool_size_standard: int = 4
     max_reuse_cycles: int = 50
     default_task_timeout_seconds: int = 300
-    max_concurrent_tasks: int = 10
+    max_concurrent_tasks: int = 2
     subtask_depth_limit: int = 1
 
 
@@ -60,7 +60,7 @@ class CompactionConfig:
     checkpoint_interval: int = 50       # turns between periodic DB checkpoints
     max_summary_words: int = 600        # target cap for running summary
     fold_batch_size: int = 3            # high-importance msgs buffered before LLM fold
-    structural_only: bool = False       # True = disable LLM compaction (testing/cost)
+    structural_only: bool = True        # LLM compaction disabled for local models
 
 
 @dataclass(frozen=True)
@@ -101,32 +101,6 @@ class ProviderDef:
 
 
 BUILTIN_PROVIDERS: dict[str, ProviderDef] = {
-    "openai": ProviderDef(
-        "openai", "https://api.openai.com/v1", "OPENAI_API_KEY",
-    ),
-    "anthropic": ProviderDef(
-        "anthropic", "https://api.anthropic.com", "ANTHROPIC_API_KEY", "anthropic",
-    ),
-    "gemini": ProviderDef(
-        "gemini",
-        "https://generativelanguage.googleapis.com/v1beta/openai",
-        "GEMINI_API_KEY",
-    ),
-    "alibaba": ProviderDef(
-        "alibaba", "https://dashscope.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY",
-    ),
-    "deepseek": ProviderDef(
-        "deepseek", "https://api.deepseek.com", "DEEPSEEK_API_KEY",
-    ),
-    "bytedance": ProviderDef(
-        "bytedance", "https://ark.cn-beijing.volces.com/api/v3", "ARK_API_KEY",
-    ),
-    "minimax": ProviderDef(
-        "minimax", "https://api.minimax.chat/v1", "MINIMAX_API_KEY",
-    ),
-    "openrouter": ProviderDef(
-        "openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
-    ),
     "local": ProviderDef(
         "local", "http://localhost:11434/v1", "",
     ),
@@ -143,7 +117,7 @@ class Config:
     autonomous: AutonomousConfig = field(default_factory=AutonomousConfig)
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
-    default_model: str = "anthropic/claude-sonnet-4"
+    default_model: str = "local/auto"
     vision_model: str | None = None  # e.g. "local/gemma4:27b" — None = auto-detect
     debug: bool = True
 
