@@ -699,16 +699,31 @@ class ProactivityManager:
             stats["relationship_level"] = rel["level"]
             stats["relationship_label"] = rel["label"]
 
-        # ── Emotional context (depends on relationship level) ──────
-        emotional_greeting_context = ""
-        try:
-            emo_ctx = await self._registry.get("emotions").get_emotional_context(
-                stats["relationship_level"]
-            )
-            if emo_ctx:
-                emotional_greeting_context = emo_ctx
-        except Exception as e:
-            logger.debug("Failed to get emotional context for greeting: %s", e)
+        # ── Wave 3: emotional context + scheduled tasks + model resolve ──
+        # These are independent of each other but depend on Wave 1 results.
+        async def _get_emo_ctx():
+            try:
+                ctx = await self._registry.get("emotions").get_emotional_context(
+                    stats["relationship_level"]
+                )
+                return ctx or ""
+            except Exception as e:
+                logger.debug("Failed to get emotional context for greeting: %s", e)
+                return ""
+
+        async def _get_scheduled():
+            try:
+                return await self._registry.get("scheduler").list_tasks()
+            except Exception as e:
+                logger.debug("Failed to fetch scheduled results for greeting: %s", e)
+                return []
+
+        async def _get_model():
+            return await self._registry.get("model_router").resolve_model()
+
+        emotional_greeting_context, _scheduled_tasks, _resolved_model = await asyncio.gather(
+            _get_emo_ctx(), _get_scheduled(), _get_model(),
+        )
 
         # Helper to build the result dict
         def _make_result(content: str) -> dict:
@@ -749,11 +764,10 @@ class ProactivityManager:
         time_str = now.strftime("%I:%M %p on %A, %B %d")
         agent_name = self._registry.get("greeting").parse_identity_field("name") or "MUSE"
 
-        # Scheduled task results
+        # Scheduled task results (already fetched in Wave 3)
         briefing_parts = []
         try:
-            scheduled = await self._registry.get("scheduler").list_tasks()
-            for task in scheduled:
+            for task in _scheduled_tasks:
                 if not task.get("last_result_json") or task.get("last_status") != "completed":
                     continue
                 try:
@@ -805,7 +819,7 @@ class ProactivityManager:
 
         context_block = "\n\n".join(context_parts) if context_parts else "No special context."
 
-        model = await self._registry.get("model_router").resolve_model()
+        model = _resolved_model  # Already resolved in Wave 3
 
         try:
             result = await self._registry.get("provider").complete(

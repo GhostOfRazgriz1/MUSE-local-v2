@@ -480,8 +480,9 @@ class PlanExecutor:
                         if not skip:
                             wave_tasks.append((idx, st, pipe_ctx))
 
+                    # Prepare each task's effective instruction and metadata
+                    _prepared: list[tuple[int, SubTask, dict, str, str]] = []
                     for idx, st, pipe_ctx in wave_tasks:
-                        # ── Iteration: inject feedback for retrying work steps ──
                         work_group = find_group_for_work_step(idx, iteration_groups)
                         if work_group:
                             pipe_ctx.update(build_iteration_pipeline_context(work_group))
@@ -496,20 +497,63 @@ class PlanExecutor:
                         if work_group and work_group.attempt > 0:
                             attempt_label = f" (attempt {work_group.attempt + 1}/{work_group.max_attempts + 1})"
 
-                        yield {
-                            "type": "status",
-                            "content": f"Step {idx + 1}/{len(steps)}: {st.skill_id} — {st.instruction[:60]}{attempt_label}",
-                        }
+                        _prepared.append((idx, st, pipe_ctx, effective_instruction, attempt_label))
 
-                        async for event in skill_executor.execute(
-                            skill_id=st.skill_id,
-                            instruction=effective_instruction,
-                            intent=intent,
-                            action=st.action,
-                            pipeline_context=pipe_ctx,
-                            record_history=False,
-                            session_id=session_id,
-                        ):
+                    # ── Parallel execution for multi-task waves ──────────
+                    # Tasks within a wave have no deps on each other, so
+                    # they can run concurrently.  Events are collected via
+                    # an asyncio.Queue and yielded in arrival order.
+                    # Single-task waves skip the queue overhead.
+                    _any_in_iteration = any(
+                        find_group_for_work_step(idx, iteration_groups)
+                        for idx, *_ in _prepared
+                    )
+                    _parallel = len(_prepared) > 1 and not _any_in_iteration
+
+                    if _parallel:
+                        # -- Parallel path (event queue) --
+                        _wave_queue: asyncio.Queue = asyncio.Queue()
+                        _sentinel = object()
+
+                        async def _run_step(s_idx, s_st, s_pipe, s_instr, s_label):
+                            try:
+                                async for evt in skill_executor.execute(
+                                    skill_id=s_st.skill_id,
+                                    instruction=s_instr,
+                                    intent=intent,
+                                    action=s_st.action,
+                                    pipeline_context=s_pipe,
+                                    record_history=False,
+                                    session_id=session_id,
+                                ):
+                                    await _wave_queue.put((s_idx, s_st, evt))
+                            except Exception as e:
+                                await _wave_queue.put((s_idx, s_st, {
+                                    "type": "error",
+                                    "content": f"Step {s_idx + 1} failed: {e}",
+                                }))
+                            finally:
+                                await _wave_queue.put(_sentinel)
+
+                        # Emit status for all tasks, then launch
+                        for idx, st, _pc, _ei, attempt_label in _prepared:
+                            yield {
+                                "type": "status",
+                                "content": f"Step {idx + 1}/{len(steps)}: {st.skill_id} — {st.instruction[:60]}{attempt_label}",
+                            }
+
+                        _running = [
+                            asyncio.create_task(_run_step(idx, st, pc, ei, al))
+                            for idx, st, pc, ei, al in _prepared
+                        ]
+
+                        _finished = 0
+                        while _finished < len(_running):
+                            item = await _wave_queue.get()
+                            if item is _sentinel:
+                                _finished += 1
+                                continue
+                            idx, st, event = item
                             if event.get("type") == "response":
                                 results[idx] = {
                                     "status": "completed",
@@ -522,8 +566,6 @@ class PlanExecutor:
                                 }
                             event["plan_step"] = idx
                             if idx in _intermediate and event.get("type") == "response":
-                                # Show a condensed status instead of the full response
-                                # so the user sees progress, not empty silence.
                                 content = event.get("content", "")
                                 preview = content[:120].split("\n")[0] if content else "Done"
                                 yield {
@@ -534,7 +576,50 @@ class PlanExecutor:
                                 continue
                             yield event
 
-                        executed_steps.add(idx)
+                        # Mark all as executed
+                        for idx, *_ in _prepared:
+                            executed_steps.add(idx)
+
+                    else:
+                        # -- Sequential path (single task or iteration) --
+                        for idx, st, pipe_ctx, effective_instruction, attempt_label in _prepared:
+                            yield {
+                                "type": "status",
+                                "content": f"Step {idx + 1}/{len(steps)}: {st.skill_id} — {st.instruction[:60]}{attempt_label}",
+                            }
+
+                            async for event in skill_executor.execute(
+                                skill_id=st.skill_id,
+                                instruction=effective_instruction,
+                                intent=intent,
+                                action=st.action,
+                                pipeline_context=pipe_ctx,
+                                record_history=False,
+                                session_id=session_id,
+                            ):
+                                if event.get("type") == "response":
+                                    results[idx] = {
+                                        "status": "completed",
+                                        "summary": event.get("content", ""),
+                                    }
+                                elif event.get("type") in ("task_failed", "error"):
+                                    results[idx] = {
+                                        "status": "failed",
+                                        "error": event.get("error", event.get("content", "")),
+                                    }
+                                event["plan_step"] = idx
+                                if idx in _intermediate and event.get("type") == "response":
+                                    content = event.get("content", "")
+                                    preview = content[:120].split("\n")[0] if content else "Done"
+                                    yield {
+                                        "type": "status",
+                                        "content": f"Step {idx + 1} completed: {preview}",
+                                        "plan_step": idx,
+                                    }
+                                    continue
+                                yield event
+
+                            executed_steps.add(idx)
 
                         # ── Relevance + reflection check for intermediate steps ──
                         # Only check steps whose output feeds into later
