@@ -130,19 +130,10 @@ function App() {
     if (sessionId) setSessionUpdateTrigger((n) => n + 1);
   }, [sessionId]);
 
-  // Check if any LLM provider with an API key is configured.
-  // The "local" provider (no env_var) doesn't count — it's always registered.
+  // Local-only build: no cloud API keys needed, skip setup entirely.
+  // The local provider (Ollama) is always available.
   useEffect(() => {
-    apiFetch("/api/settings/providers")
-      .then((r) => r.json())
-      .then((data) => {
-        const providers = data.providers || [];
-        const hasKeyedProvider = providers.some(
-          (p: { source: string | null; env_var: string }) => p.source != null && p.env_var
-        );
-        setNeedsSetup(!hasKeyedProvider);
-      })
-      .catch(() => setNeedsSetup(false));
+    setNeedsSetup(false);
   }, []);
 
   // Close task popover when clicking outside

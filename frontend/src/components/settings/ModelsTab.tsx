@@ -72,10 +72,8 @@ function ModelsTab() {
       .finally(() => setLoading(false));
   }, []);
 
-  const onKeyChanged = () => {
-    fetchProviders();
-    fetchModels();
-  };
+  // Local-only build: suppress unused refs from cloud provider UI
+  void providers; void fetchModels; void fetchProviders;
 
   const saveDefaultModel = async (modelId: string) => {
     setDefaultModel(modelId);
@@ -159,8 +157,6 @@ function ModelsTab() {
     return `$${(price * 1_000_000).toFixed(2)}/M`;
   };
 
-  const activeProviders = providers.filter((p) => p.source !== null);
-  const inactiveProviders = providers.filter((p) => p.source === null);
   const filteredProviderNames = Object.keys(filteredGalleryModels);
 
   return (
@@ -172,21 +168,18 @@ function ModelsTab() {
 
       {/* ═══ SIMPLE VIEW ═══ */}
 
-      {/* All providers */}
+      {/* Local-only: show Ollama status instead of API key management */}
       <SettingsSection
-        title={t("settings_providers")}
-        description={t("settings_providers_desc")}
+        title="Local Provider"
+        description="Using Ollama for local model inference. Make sure Ollama is running on localhost:11434."
       >
         <div className="provider-keys-list">
-          {[...activeProviders, ...inactiveProviders].map((p) => (
-            <ProviderKeyRow
-              key={p.id}
-              provider={p}
-              onKeyChanged={onKeyChanged}
-              onDeleted={p.is_custom ? onKeyChanged : undefined}
-            />
-          ))}
-          <AddCustomProviderForm onAdded={onKeyChanged} />
+          <div className="provider-key-row">
+            <div className="provider-key-info">
+              <span className="provider-key-name">Ollama</span>
+              <span className="provider-key-badge badge-env">local</span>
+            </div>
+          </div>
         </div>
       </SettingsSection>
 
@@ -289,6 +282,8 @@ function ModelsTab() {
 
 /* ─── Provider API Key Row ─── */
 
+// Cloud provider UI — unused in local-only build, kept for reference
+// @ts-ignore: unused in local build
 function ProviderKeyRow({
   provider,
   onKeyChanged,
@@ -433,6 +428,7 @@ function ProviderKeyRow({
 
 /* ─── Add Custom Provider Form ─── */
 
+// @ts-ignore: unused in local build
 function AddCustomProviderForm({ onAdded }: { onAdded: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
