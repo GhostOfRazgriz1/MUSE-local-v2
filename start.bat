@@ -195,7 +195,7 @@ echo.
 > "!LAUNCHER_DIR!\_backend.cmd" (
     echo @echo off
     echo title MUSE - Backend
-    echo "!PYTHON!" -m uvicorn muse.api.app:create_app --factory --host 127.0.0.1 --port 8080 --reload --app-dir "!ROOT!src"
+    echo "!PYTHON!" -m uvicorn muse.api.app:create_app --factory --host 127.0.0.1 --port 8080 --reload --app-dir "!ROOT!src" --reload-exclude ".venv" --reload-exclude "node_modules" --reload-exclude "frontend/test-results"
     echo if errorlevel 1 (
     echo     echo.
     echo     echo ===== Backend crashed =====

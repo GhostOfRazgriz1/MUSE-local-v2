@@ -200,7 +200,7 @@ trap cleanup EXIT INT TERM
 
 # Start backend (live output to terminal)
 cd "$ROOT"
-python -m uvicorn muse.api.app:create_app --factory --host 127.0.0.1 --port 8080 --reload --app-dir src &
+python -m uvicorn muse.api.app:create_app --factory --host 127.0.0.1 --port 8080 --reload --app-dir src --reload-exclude ".venv" --reload-exclude "node_modules" --reload-exclude "frontend/test-results" &
 PIDS+=($!)
 
 # Poll until backend is ready (max 15s)
