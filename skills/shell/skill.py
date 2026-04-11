@@ -21,6 +21,54 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
+# ── Venv command resolution ────────────────────────────────────
+
+def _project_root() -> Path:
+    """Walk up from this file to find pyproject.toml."""
+    p = Path(__file__).resolve()
+    for parent in p.parents:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return Path.cwd()
+
+
+def _resolve_venv_command(cmd: str) -> str:
+    """Replace bare pip/python/uvx at the start of a command with the
+    project venv equivalent so packages install to the right place."""
+    root = _project_root()
+    parts = cmd.split(None, 1)
+    if not parts:
+        return cmd
+
+    base = parts[0]
+    rest = parts[1] if len(parts) > 1 else ""
+
+    _VENV_MAP: dict[str, Path] = {}
+    if sys.platform == "win32":
+        venv_bin = root / ".venv" / "Scripts"
+        _VENV_MAP = {
+            "pip": venv_bin / "pip.exe",
+            "python": venv_bin / "python.exe",
+            "python3": venv_bin / "python.exe",
+            "uvx": venv_bin / "uvx.exe",
+        }
+    else:
+        venv_bin = root / ".venv" / "bin"
+        _VENV_MAP = {
+            "pip": venv_bin / "pip",
+            "pip3": venv_bin / "pip3",
+            "python": venv_bin / "python",
+            "python3": venv_bin / "python3",
+            "uvx": venv_bin / "uvx",
+        }
+
+    resolved = _VENV_MAP.get(base)
+    if resolved and resolved.exists():
+        return f'"{resolved}" {rest}'.strip()
+
+    return cmd
+
+
 # ── Risk classification ─────────────────────────────────────────
 
 # Commands considered read-only (safe for session-scoped approval)
@@ -465,6 +513,10 @@ async def run(ctx) -> dict:
 
     if not await _check_and_approve(ctx, "command", scope_key, description):
         return _err(f"Running `{cmd}` was denied.")
+
+    # Resolve pip/python to project venv so installations go to the
+    # right environment instead of depending on system PATH.
+    cmd = _resolve_venv_command(cmd)
 
     await ctx.task.report_status(f"Running: {cmd}")
 
