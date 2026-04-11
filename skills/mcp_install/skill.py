@@ -73,7 +73,7 @@ async def _extract_mcp_config(ctx, readme: str, owner: str, repo: str) -> dict |
         max_tokens=500,
     )
 
-    text = result.text.strip()
+    text = result.strip()  # ctx.llm.complete() returns str directly
     # Strip markdown fences if present
     if text.startswith("```"):
         text = re.sub(r"^```\w*\n?", "", text)
@@ -142,9 +142,13 @@ async def _handle_install(ctx, instruction: str) -> dict:
             ),
         }
 
-    # Check for placeholder env vars that need user input
+    # Check for placeholder values that need user input (env vars + args)
     env = config.get("env", {})
     placeholders = {k: v for k, v in env.items() if v == "PLACEHOLDER" or "YOUR_" in str(v).upper()}
+    args = config.get("args", [])
+    for i, arg in enumerate(args):
+        if isinstance(arg, str) and ("PLACEHOLDER" in arg.upper() or "YOUR_" in arg.upper()):
+            placeholders[f"args[{i}] ({arg})"] = arg
     if placeholders:
         keys_needed = ", ".join(placeholders.keys())
         return {
@@ -229,7 +233,7 @@ async def _handle_search(ctx, instruction: str) -> dict:
     return {
         "success": True,
         "summary": (
-            f"{result.text.strip()}\n\n"
+            f"{result.strip()}\n\n"
             f"Send me a GitHub link to install any of these."
         ),
     }

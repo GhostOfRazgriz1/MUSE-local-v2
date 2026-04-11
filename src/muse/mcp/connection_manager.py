@@ -58,6 +58,16 @@ def _resolve_command(command: str, env: dict[str, str] | None) -> str:
             logger.debug("Resolved %s → %s", command, venv_python)
             return str(venv_python)
 
+    # uvx — prefer the project venv (installed alongside pip/python)
+    if command in ("uvx", "uvx.exe"):
+        if sys.platform == "win32":
+            venv_uvx = root / ".venv" / "Scripts" / "uvx.exe"
+        else:
+            venv_uvx = root / ".venv" / "bin" / "uvx"
+        if venv_uvx.exists():
+            logger.debug("Resolved %s → %s", command, venv_uvx)
+            return str(venv_uvx)
+
     # Node / npx — prefer frontend/node_modules/.bin
     if command in ("node", "npx", "node.exe", "npx.exe", "npx.cmd"):
         suffix = ".cmd" if sys.platform == "win32" else ""
