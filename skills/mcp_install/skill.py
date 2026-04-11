@@ -145,25 +145,34 @@ async def _handle_install(ctx, instruction: str) -> dict:
             ),
         }
 
-    # Check for placeholder values that need user input (env vars + args)
+    # Check for placeholder values that need user input (env vars + args).
+    # Prompt the user inline via ctx.user.ask() so the skill can continue
+    # with the filled-in config without a separate conversation turn.
     env = config.get("env", {})
-    placeholders = {k: v for k, v in env.items() if v == "PLACEHOLDER" or "YOUR_" in str(v).upper()}
-    args = config.get("args", [])
-    for i, arg in enumerate(args):
+    config_args = config.get("args", [])
+
+    # Prompt for env var placeholders
+    for key, val in list(env.items()):
+        if val == "PLACEHOLDER" or "YOUR_" in str(val).upper():
+            answer = await ctx.user.ask(
+                f"**{config.get('name', repo)}** needs `{key}`.\n"
+                f"Please enter the value:"
+            )
+            env[key] = answer.strip()
+    config["env"] = env
+
+    # Prompt for arg placeholders
+    for i, arg in enumerate(config_args):
         if isinstance(arg, str) and ("PLACEHOLDER" in arg.upper() or "YOUR_" in arg.upper()):
-            placeholders[f"args[{i}] ({arg})"] = arg
-    if placeholders:
-        keys_needed = ", ".join(placeholders.keys())
-        return {
-            "success": False,
-            "summary": (
-                f"Found MCP config for **{config.get('name', repo)}** "
-                f"(`{config.get('command', '?')} {' '.join(config.get('args', []))}`), "
-                f"but it needs environment variables: **{keys_needed}**.\n\n"
-                f"Please provide the values and I'll complete the setup."
-            ),
-            "payload": {"config": config, "needs_env": list(placeholders.keys())},
-        }
+            # Try to give context from the preceding flag (e.g. "--workspace")
+            flag_hint = config_args[i - 1] if i > 0 and config_args[i - 1].startswith("-") else None
+            if flag_hint:
+                question = f"**{config.get('name', repo)}** needs a value for `{flag_hint}`:"
+            else:
+                question = f"**{config.get('name', repo)}** needs a configuration value (argument {i + 1}):"
+            answer = await ctx.user.ask(question)
+            config_args[i] = answer.strip()
+    config["args"] = config_args
 
     # Use the orchestrator bridge to register the MCP server directly.
     # (Skills can't HTTP to localhost due to SSRF protection.)
