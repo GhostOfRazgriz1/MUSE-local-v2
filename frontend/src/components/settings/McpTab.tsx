@@ -18,6 +18,8 @@ interface MCPServer {
   error: string | null;
   tool_count: number;
   tools?: { name: string; description: string }[];
+  context_mode?: "none" | "instruction" | "full";
+  enrichment_mode?: "always" | "never" | "auto";
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -313,6 +315,53 @@ function MCPTab() {
                       <code className="mcp-config-value">
                         {s.transport === "stdio" ? [s.command, ...s.args].join(" ") : s.url}
                       </code>
+                    </div>
+
+                    <div className="mcp-card-modes">
+                      <div className="mcp-mode-row">
+                        <span className="mcp-config-label">Context injection</span>
+                        <div className="mcp-transport-toggle">
+                          {(["none", "instruction", "full"] as const).map((mode) => (
+                            <button
+                              key={mode}
+                              className={`mcp-transport-btn ${(s.context_mode || "instruction") === mode ? "active" : ""}`}
+                              onClick={async () => {
+                                await apiFetch(`/api/mcp/servers/${s.server_id}`, {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ context_mode: mode }),
+                                });
+                                fetchServers();
+                              }}
+                              type="button"
+                            >
+                              {mode === "none" ? "None" : mode === "instruction" ? "Instruction" : "Full conversation"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="mcp-mode-row">
+                        <span className="mcp-config-label">Response enrichment</span>
+                        <div className="mcp-transport-toggle">
+                          {(["never", "auto", "always"] as const).map((mode) => (
+                            <button
+                              key={mode}
+                              className={`mcp-transport-btn ${(s.enrichment_mode || "auto") === mode ? "active" : ""}`}
+                              onClick={async () => {
+                                await apiFetch(`/api/mcp/servers/${s.server_id}`, {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ enrichment_mode: mode }),
+                                });
+                                fetchServers();
+                              }}
+                              type="button"
+                            >
+                              {mode === "never" ? "Raw" : mode === "auto" ? "Auto" : "Always"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
 
                     {expandedTools.length > 0 && (

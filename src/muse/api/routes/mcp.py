@@ -106,6 +106,27 @@ async def update_server(server_id: str, body: dict):
     }
 
 
+@router.patch("/servers/{server_id}")
+async def patch_server(server_id: str, body: dict):
+    """Partially update an MCP server config (no reconnect)."""
+    manager, _ = _get_manager()
+
+    existing = await manager._load_config(server_id)
+    if not existing:
+        raise HTTPException(404, f"Server '{server_id}' not found")
+
+    # Merge patch fields onto existing config
+    merged = existing.to_dict()
+    for key, value in body.items():
+        if key in merged and key != "server_id":
+            merged[key] = value
+
+    config = MCPServerConfig.from_dict(merged)
+    await manager.update_server(server_id, config)
+
+    return {"status": "updated", "server_id": server_id}
+
+
 @router.delete("/servers/{server_id}")
 async def delete_server(server_id: str):
     """Remove an MCP server (disconnects and deletes)."""

@@ -47,6 +47,19 @@ class MCPExecutor:
         """
         if not raw_content.strip():
             return "Done."
+
+        # Skip enrichment when the output is already user-friendly:
+        # - Short responses (status messages, confirmations)
+        # - No structured data markers (JSON, HTML, raw dumps)
+        stripped = raw_content.strip()
+        _looks_structured = (
+            stripped.startswith(("{", "[", "<", "```"))
+            or "\t" in stripped[:200]
+            or stripped.count("\n") > 10
+        )
+        if len(stripped) < 150 and not _looks_structured:
+            return stripped
+
         truncated = raw_content[: self._ENRICH_MAX_CHARS]
         try:
             result = await provider.complete(
@@ -67,6 +80,38 @@ class MCPExecutor:
         except Exception as e:
             logger.warning("MCP response enrichment failed: %s", e)
             return truncated[:2000]
+
+    async def _maybe_enrich(
+        self,
+        provider,
+        model: str,
+        user_message: str,
+        tool_name: str,
+        raw_content: str,
+    ) -> str:
+        """Auto-decide whether to enrich based on output characteristics.
+
+        Skips enrichment for short, clean responses and error-like output.
+        Enriches structured data (JSON, HTML), long output, and raw dumps.
+        """
+        if not raw_content.strip():
+            return "Done."
+        stripped = raw_content.strip()
+
+        _looks_structured = (
+            stripped.startswith(("{", "[", "<", "```"))
+            or "\t" in stripped[:200]
+            or stripped.count("\n") > 10
+        )
+
+        # Short, clean text — pass through
+        if len(stripped) < 150 and not _looks_structured:
+            return stripped
+
+        # Long or structured — enrich
+        return await self._enrich_response(
+            provider, model, user_message, tool_name, raw_content,
+        )
 
     async def execute(
         self,
@@ -112,14 +157,36 @@ class MCPExecutor:
             )
             return
 
+        context_mode = conn.config.context_mode    # none | instruction | full
+        enrichment_mode = conn.config.enrichment_mode  # always | never | auto
+
         try:
             # ── LLM argument extraction ──────────────────────────
             input_schema = tool_schema.get("inputSchema", {})
             required_fields = input_schema.get("required", [])
             model = await model_router.resolve_model()
 
+            # Build context based on context_mode
+            context_block = ""
+            if context_mode == "instruction":
+                context_block = f'User: "{user_message}"\n'
+            elif context_mode == "full":
+                # Include recent conversation for context-aware tools
+                history = self._session.conversation_history[-6:]
+                conv_lines = []
+                for msg in history:
+                    role = msg.get("role", "?")
+                    text = msg.get("content", "")[:200]
+                    conv_lines.append(f"{role}: {text}")
+                conv_summary = "\n".join(conv_lines) if conv_lines else ""
+                context_block = (
+                    f"Recent conversation:\n{conv_summary}\n\n"
+                    f'Current request: "{user_message}"\n'
+                )
+            # context_mode == "none": no context_block
+
             arg_prompt = (
-                f'User: "{user_message}"\n'
+                f"{context_block}"
                 f"Tool: {tool_name}\n"
                 f"Schema: {json.dumps(input_schema)}\n\n"
                 f"Extract arguments as JSON. Reply with ONLY valid JSON."
@@ -171,11 +238,18 @@ class MCPExecutor:
                 )
             else:
                 content = result.get("content", "")
-                # Enrich raw MCP output with an LLM pass so the response
-                # is conversational (first-party skills do this internally).
-                summary = await self._enrich_response(
-                    provider, model, user_message, tool_name, content,
-                )
+                # Apply enrichment based on server config
+                if enrichment_mode == "never":
+                    summary = content[:2000] if content else "Done."
+                elif enrichment_mode == "always":
+                    summary = await self._enrich_response(
+                        provider, model, user_message, tool_name, content,
+                    )
+                else:
+                    # "auto" — enrich if output looks like raw structured data
+                    summary = await self._maybe_enrich(
+                        provider, model, user_message, tool_name, content,
+                    )
                 total_in = arg_result.tokens_in
                 total_out = arg_result.tokens_out
                 await task_manager.update_status(

@@ -55,13 +55,18 @@ async def _extract_mcp_config(ctx, readme: str, owner: str, repo: str) -> dict |
             f' "command": "the command to run (e.g. npx, python, node, uvx)",\n'
             f' "args": ["array", "of", "arguments"],\n'
             f' "env": {{"ENV_VAR": "value or PLACEHOLDER"}},\n'
-            f' "url": "only for sse/streamable-http transport"}}\n\n'
+            f' "url": "only for sse/streamable-http transport",\n'
+            f' "context_mode": "none" or "instruction" or "full",\n'
+            f' "enrichment_mode": "always" or "never" or "auto"}}\n\n'
             f"Rules:\n"
             f"- For npx-based servers, use: command=npx, args=[-y, package-name]\n"
             f"- For uvx-based servers, use: command=uvx, args=[package-name]\n"
             f"- For python-based servers, use: command=python, args=[-m, module]\n"
             f"- server_id should be a short, unique kebab-case identifier\n"
             f"- If env vars need API keys, use PLACEHOLDER as the value\n"
+            f"- context_mode: use 'none' for code/file tools, 'instruction' for search/data tools, 'full' for conversational tools\n"
+            f"- enrichment_mode: use 'never' for tools that return code or structured output the user needs raw, "
+            f"'always' for search/API tools that return raw data needing summarization, 'auto' if unsure\n"
             f"- Reply with ONLY the JSON object, no markdown fences"
         ),
         system="Extract MCP configuration from the README. Reply with ONLY valid JSON.",
@@ -83,6 +88,10 @@ async def _extract_mcp_config(ctx, readme: str, owner: str, repo: str) -> dict |
             config["name"] = repo
         if not config.get("transport"):
             config["transport"] = "stdio"
+        if config.get("context_mode") not in ("none", "instruction", "full"):
+            config["context_mode"] = "instruction"
+        if config.get("enrichment_mode") not in ("always", "never", "auto"):
+            config["enrichment_mode"] = "auto"
         return config
     except json.JSONDecodeError:
         return None

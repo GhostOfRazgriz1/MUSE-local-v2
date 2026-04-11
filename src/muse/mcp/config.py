@@ -26,6 +26,20 @@ class MCPServerConfig:
     enabled: bool = True
     auto_approve_tools: list[str] = field(default_factory=list)
 
+    # Context injection: how much conversation context to include when
+    # extracting tool arguments.
+    #   "none"        — pure schema arguments only (code tools, utilities)
+    #   "instruction" — include the user's message (default, most tools)
+    #   "full"        — include conversation history + memory context
+    context_mode: str = "instruction"
+
+    # Response enrichment: whether to LLM-process the raw tool output
+    # into a conversational response.
+    #   "always" — always enrich (search, data APIs)
+    #   "never"  — pass through raw (code tools, structured output)
+    #   "auto"   — enrich if output looks like raw data (default)
+    enrichment_mode: str = "auto"
+
     # Timestamps
     created_at: str = ""
     updated_at: str = ""
@@ -41,6 +55,8 @@ class MCPServerConfig:
             "url": self.url,
             "enabled": self.enabled,
             "auto_approve_tools": list(self.auto_approve_tools),
+            "context_mode": self.context_mode,
+            "enrichment_mode": self.enrichment_mode,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -60,6 +76,8 @@ class MCPServerConfig:
             url=d.get("url", ""),
             enabled=d.get("enabled", True),
             auto_approve_tools=d.get("auto_approve_tools", []),
+            context_mode=d.get("context_mode", "instruction"),
+            enrichment_mode=d.get("enrichment_mode", "auto"),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
         )
