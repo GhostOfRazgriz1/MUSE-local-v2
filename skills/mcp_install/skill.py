@@ -60,10 +60,13 @@ async def _extract_mcp_config(ctx, readme: str, owner: str, repo: str) -> dict |
             f' "enrichment_mode": "always" or "never" or "auto"}}\n\n'
             f"Rules:\n"
             f"- For npx-based servers, use: command=npx, args=[-y, package-name]\n"
-            f"- For uvx-based servers, use: command=uvx, args=[package-name]\n"
-            f"- For python-based servers, use: command=python, args=[-m, module]\n"
+            f"- For uvx-based servers, use: command=uvx, args=[package-name, subcommand, ...flags]\n"
+            f"  Example: uvx serena mcp --workspace /path → command=uvx, args=[serena, mcp, --workspace, PLACEHOLDER]\n"
+            f"- For pip-installed Python tools, use: command=python, args=[-m, module]\n"
+            f"- The command should be the executable runner (npx, uvx, python, node), NOT the package name itself\n"
             f"- server_id should be a short, unique kebab-case identifier\n"
             f"- If env vars need API keys, use PLACEHOLDER as the value\n"
+            f"- If args include paths the user must configure (like --workspace), use PLACEHOLDER\n"
             f"- context_mode: use 'none' for code/file tools, 'instruction' for search/data tools, 'full' for conversational tools\n"
             f"- enrichment_mode: use 'never' for tools that return code or structured output the user needs raw, "
             f"'always' for search/API tools that return raw data needing summarization, 'auto' if unsure\n"
@@ -173,12 +176,28 @@ async def _handle_install(ctx, instruction: str) -> dict:
         if result and result.get("success"):
             tool_count = result.get("tool_count", 0)
             status = result.get("connection_status", "unknown")
+            cmd_str = f"`{config.get('command', '')} {' '.join(config.get('args', []))}`"
+
+            if status == "error" or (status == "connected" and tool_count == 0):
+                return {
+                    "success": False,
+                    "summary": (
+                        f"Registered **{config['name']}** but failed to connect.\n"
+                        f"- Command: {cmd_str}\n"
+                        f"- Status: {status}\n\n"
+                        f"This usually means the command isn't installed. "
+                        f"You may need to run `pip install {config.get('args', [''])[0]}` "
+                        f"or `npm install -g {config.get('args', [''])[0]}` first.\n\n"
+                        f"You can configure it in Settings > MCP."
+                    ),
+                }
+
             return {
                 "success": True,
                 "summary": (
                     f"Installed **{config['name']}** MCP server.\n"
                     f"- Transport: {config['transport']}\n"
-                    f"- Command: `{config.get('command', '')} {' '.join(config.get('args', []))}`\n"
+                    f"- Command: {cmd_str}\n"
                     f"- Status: {status}\n"
                     f"- Tools available: {tool_count}\n\n"
                     f"The new tools are ready to use."
