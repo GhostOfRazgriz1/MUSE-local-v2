@@ -158,7 +158,7 @@ class MCPExecutor:
                 placeholder = match.group(1)
                 value = self._infer_template_value(placeholder)
                 if value:
-                    resolved[i] = self._TEMPLATE_RE.sub(value, arg)
+                    resolved[i] = arg.replace("{" + placeholder + "}", value)
                 else:
                     logger.warning(
                         "Unresolved template {%s} for MCP server %s",
