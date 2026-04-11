@@ -115,14 +115,21 @@ async def run(ctx) -> dict:
 
 
 async def _handle_install(ctx, instruction: str) -> dict:
-    """Install an MCP server from a GitHub URL."""
+    """Install an MCP server from a URL, package name, or command."""
     info = _extract_github_info(instruction)
+
+    # No GitHub URL — try to infer config from the instruction directly.
+    # Handles: "install a2asearch-mcp", "npx -y some-mcp", "uvx serena mcp"
     if not info:
+        config = await _infer_config_from_instruction(ctx, instruction)
+        if config:
+            return await _register_config(ctx, config)
         return {
             "success": False,
             "summary": (
-                "I need a GitHub URL to install an MCP server. "
-                "Send me a link like: https://github.com/owner/repo"
+                "I couldn't determine how to install this MCP server. "
+                "Try sending a GitHub URL (e.g. https://github.com/owner/repo) "
+                "or a package name (e.g. 'a2asearch-mcp')."
             ),
         }
 
@@ -147,38 +154,82 @@ async def _handle_install(ctx, instruction: str) -> dict:
             ),
         }
 
-    # Check for placeholder values that need user input (env vars + args).
-    # Prompt the user inline via ctx.user.ask() so the skill can continue
-    # with the filled-in config without a separate conversation turn.
+    return await _register_config(ctx, config)
+
+
+async def _infer_config_from_instruction(ctx, instruction: str) -> dict | None:
+    """Try to build an MCP config from a package name or command."""
+    await ctx.task.report_status("Inferring MCP configuration...")
+
+    result = await ctx.llm.complete(
+        prompt=(
+            f"User instruction: {instruction}\n\n"
+            f"The user wants to install an MCP server but didn't provide a GitHub URL. "
+            f"Based on the instruction, generate a JSON config.\n\n"
+            f"Common patterns:\n"
+            f"- npm package name (e.g. 'a2asearch-mcp') → command=npx, args=[-y, package-name]\n"
+            f"- Python package (e.g. 'serena') → command=uvx, args=[package-name]\n"
+            f"- Direct command (e.g. 'npx -y foo-mcp') → parse command and args\n\n"
+            f"JSON fields: server_id, name, transport (stdio), command, args, env, "
+            f"context_mode (none|instruction|full), enrichment_mode (always|never|auto)\n\n"
+            f"If you can't determine the config, reply with just: UNKNOWN\n"
+            f"Otherwise reply with ONLY the JSON object."
+        ),
+        system="Extract MCP configuration from the user's instruction. Reply with ONLY valid JSON or UNKNOWN.",
+        max_tokens=400,
+    )
+
+    text = result.strip()
+    if text.upper() == "UNKNOWN":
+        return None
+    if text.startswith("```"):
+        text = re.sub(r"^```\w*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+    try:
+        config = json.loads(text)
+        if not config.get("server_id"):
+            config["server_id"] = instruction.lower().split()[0].replace("_", "-")
+        if not config.get("name"):
+            config["name"] = config["server_id"]
+        config.setdefault("transport", "stdio")
+        if config.get("context_mode") not in ("none", "instruction", "full"):
+            config["context_mode"] = "instruction"
+        if config.get("enrichment_mode") not in ("always", "never", "auto"):
+            config["enrichment_mode"] = "auto"
+        return config
+    except (json.JSONDecodeError, KeyError):
+        return None
+
+
+async def _register_config(ctx, config: dict) -> dict:
+    """Prompt for placeholders, register config, return result."""
+    name = config.get("name", "MCP server")
+
+    # Prompt for placeholder values inline
     env = config.get("env", {})
     config_args = config.get("args", [])
 
-    # Prompt for env var placeholders
     for key, val in list(env.items()):
         if val == "PLACEHOLDER" or "YOUR_" in str(val).upper():
             answer = await ctx.user.ask(
-                f"**{config.get('name', repo)}** needs `{key}`.\n"
-                f"Please enter the value:"
+                f"**{name}** needs `{key}`.\nPlease enter the value:"
             )
             env[key] = answer.strip()
     config["env"] = env
 
-    # Prompt for arg placeholders
     for i, arg in enumerate(config_args):
         if isinstance(arg, str) and ("PLACEHOLDER" in arg.upper() or "YOUR_" in arg.upper()):
-            # Try to give context from the preceding flag (e.g. "--workspace")
             flag_hint = config_args[i - 1] if i > 0 and config_args[i - 1].startswith("-") else None
             if flag_hint:
-                question = f"**{config.get('name', repo)}** needs a value for `{flag_hint}`:"
+                question = f"**{name}** needs a value for `{flag_hint}`:"
             else:
-                question = f"**{config.get('name', repo)}** needs a configuration value (argument {i + 1}):"
+                question = f"**{name}** needs a configuration value (argument {i + 1}):"
             answer = await ctx.user.ask(question)
             config_args[i] = answer.strip()
     config["args"] = config_args
 
-    # Use the orchestrator bridge to register the MCP server directly.
-    # (Skills can't HTTP to localhost due to SSRF protection.)
-    await ctx.task.report_status(f"Registering {config.get('name', repo)}...")
+    # Register via orchestrator bridge
+    await ctx.task.report_status(f"Registering {name}...")
 
     try:
         result = await ctx.skill.gateway_call(
@@ -193,12 +244,11 @@ async def _handle_install(ctx, instruction: str) -> dict:
                 return {
                     "success": False,
                     "summary": (
-                        f"Registered **{config['name']}** but failed to connect.\n"
+                        f"Registered **{name}** but failed to connect.\n"
                         f"- Command: {cmd_str}\n"
                         f"- Status: {status}\n\n"
                         f"This usually means the command isn't installed. "
-                        f"You may need to run `pip install {config.get('args', [''])[0]}` "
-                        f"or `npm install -g {config.get('args', [''])[0]}` first.\n\n"
+                        f"You may need to install it first.\n\n"
                         f"You can configure it in Settings > MCP."
                     ),
                 }
@@ -206,7 +256,7 @@ async def _handle_install(ctx, instruction: str) -> dict:
             return {
                 "success": True,
                 "summary": (
-                    f"Installed **{config['name']}** MCP server.\n"
+                    f"Installed **{name}** MCP server.\n"
                     f"- Transport: {config['transport']}\n"
                     f"- Command: {cmd_str}\n"
                     f"- Status: {status}\n"
@@ -218,12 +268,11 @@ async def _handle_install(ctx, instruction: str) -> dict:
             error = result.get("error", "Unknown error") if result else "No response"
             return {"success": False, "summary": f"Failed to register: {error}"}
     except Exception as e:
-        # Fallback: return the config for manual installation
         return {
             "success": False,
             "summary": (
-                f"Extracted config for **{config['name']}** but couldn't auto-register.\n\n"
-                f"Add this in Settings → MCP:\n"
+                f"Extracted config for **{name}** but couldn't auto-register.\n\n"
+                f"Add this in Settings > MCP:\n"
                 f"```json\n{json.dumps(config, indent=2)}\n```"
             ),
             "payload": {"config": config},
