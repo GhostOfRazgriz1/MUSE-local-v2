@@ -16,7 +16,7 @@
         {"id": "search", "description": "Search for available MCP servers to install"}
     ],
     "max_tokens": 4000,
-    "timeout_seconds": 60,
+    "timeout_seconds": 300,
     "isolation_tier": "lightweight",
     "entry_point": "skill.py",
     "is_first_party": true,

@@ -27,17 +27,19 @@ def _extract_github_info(text: str) -> tuple[str, str] | None:
 
 async def _fetch_readme(ctx, owner: str, repo: str) -> str | None:
     """Fetch the README content from a GitHub repo."""
-    # Try common README filenames via raw.githubusercontent.com
-    for name in ("README.md", "readme.md", "README.MD", "README"):
-        url = f"https://raw.githubusercontent.com/{owner}/{repo}/main/{name}"
-        resp = await ctx.http.get(url)
-        if resp.status_code == 200:
-            return resp.text()
-        # Try master branch
-        url = f"https://raw.githubusercontent.com/{owner}/{repo}/master/{name}"
-        resp = await ctx.http.get(url)
-        if resp.status_code == 200:
-            return resp.text()
+    # Use the GitHub API — single call, returns the default branch README
+    # regardless of branch name or filename casing.
+    api_url = f"https://api.github.com/repos/{owner}/{repo}/readme"
+    resp = await ctx.http.get(api_url, headers={"Accept": "application/vnd.github.raw+json"})
+    if resp.status_code == 200:
+        return resp.text()
+    # Fallback: try raw.githubusercontent.com with common names
+    for name in ("README.md", "readme.md"):
+        for branch in ("main", "master"):
+            url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{name}"
+            resp = await ctx.http.get(url)
+            if resp.status_code == 200:
+                return resp.text()
     return None
 
 
