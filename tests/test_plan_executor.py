@@ -199,22 +199,22 @@ class TestResultRelevance:
     @pytest.mark.asyncio
     async def test_short_summary_skipped(self, executor):
         """Summaries under 40 chars are assumed relevant (status messages)."""
-        ok, reason = await executor._check_result_relevance(
+        ok, _adjust, reason = await executor._check_result_relevance(
             "search for X", "Done.", "find X",
         )
         assert ok is True
 
     @pytest.mark.asyncio
     async def test_empty_summary_skipped(self, executor):
-        ok, reason = await executor._check_result_relevance(
+        ok, _adjust, reason = await executor._check_result_relevance(
             "search for X", "", "find X",
         )
         assert ok is True
 
     @pytest.mark.asyncio
     async def test_relevant_result_passes(self, executor, provider):
-        provider.set_default_response("YES")
-        ok, reason = await executor._check_result_relevance(
+        provider.set_default_response("RELEVANT")
+        ok, _adjust, reason = await executor._check_result_relevance(
             "search for sightseeing spots in Japan",
             "Here are the top 5 sightseeing spots in Japan: Fushimi Inari, Mount Fuji...",
             "plan a trip to Japan",
@@ -223,8 +223,8 @@ class TestResultRelevance:
 
     @pytest.mark.asyncio
     async def test_irrelevant_result_caught(self, executor, provider):
-        provider.set_default_response("NO: content is about greeting etiquette, not sightseeing")
-        ok, reason = await executor._check_result_relevance(
+        provider.set_default_response("IRRELEVANT: content is about greeting etiquette, not sightseeing")
+        ok, _adjust, reason = await executor._check_result_relevance(
             "search for sightseeing spots in Japan",
             "Japanese Greeting Etiquette: Bowing is the most common form of greeting...",
             "plan a trip to Japan",
@@ -239,7 +239,7 @@ class TestResultRelevance:
             raise RuntimeError("LLM unavailable")
         provider.complete = _raise
 
-        ok, reason = await executor._check_result_relevance(
+        ok, _adjust, reason = await executor._check_result_relevance(
             "search for X",
             "Some long result that would normally be checked for relevance by the LLM",
             "goal",
@@ -407,8 +407,8 @@ class TestStepExecution:
             {"skill_id": "notify", "instruction": "send results", "depends_on": [0]},
         ])
         provider.set_default_response(plan)
-        # After plan generation, the next LLM call is relevance check — return NO
-        provider.add_response("does this result", "NO: content is about greeting etiquette")
+        # After plan generation, the next LLM call is relevance check — return IRRELEVANT
+        provider.add_response("does this result", "IRRELEVANT: content is about greeting etiquette")
 
         registry = _make_registry(provider, None)
         session = _make_session()

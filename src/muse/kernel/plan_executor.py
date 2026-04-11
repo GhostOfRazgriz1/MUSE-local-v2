@@ -85,19 +85,41 @@ class PlanExecutor:
     # ------------------------------------------------------------------
 
     async def _check_result_relevance(
-        self, step_instruction: str, result_summary: str, goal: str,
-    ) -> tuple[bool, str]:
-        """Lightweight LLM check: does a step's output address its instruction?
+        self,
+        step_instruction: str,
+        result_summary: str,
+        goal: str,
+        remaining_steps: list[dict] | None = None,
+    ) -> tuple[bool, bool, str]:
+        """Lightweight LLM check: does a step's output address its instruction,
+        and should the remaining plan be adjusted?
 
-        Returns (is_relevant, reason).  Skipped when the summary is short
-        (likely a status message) or empty (already handled as failure).
+        Returns ``(is_relevant, should_adjust_plan, reason)``.
+
+        The plan-adjustment signal lets the executor re-plan between steps
+        when an intermediate result reveals new information (e.g. a search
+        returns unexpected data that changes the optimal next step).
+
+        Skipped when the summary is short (likely a status message) or empty.
         """
         if not result_summary or len(result_summary) < 40:
-            return True, ""
+            return True, False, ""
 
         provider = self._registry.get("provider")
         model_router = self._registry.get("model_router")
         model = await model_router.resolve_model()
+
+        # Build a brief description of remaining steps so the LLM can
+        # judge whether they still make sense given this result.
+        remaining_desc = ""
+        if remaining_steps:
+            remaining_desc = (
+                "\n\nRemaining plan steps:\n"
+                + "\n".join(
+                    f"  - {s.get('skill_id', '?')}: {s.get('instruction', '')[:80]}"
+                    for s in remaining_steps[:5]
+                )
+            )
 
         try:
             result = await provider.complete(
@@ -105,29 +127,44 @@ class PlanExecutor:
                 messages=[{"role": "user", "content": (
                     f"Goal: {goal[:200]}\n"
                     f"Step instruction: {step_instruction[:200]}\n"
-                    f"Step result (first 500 chars): {result_summary[:500]}\n\n"
-                    f"Does this result meaningfully address the step instruction "
-                    f"in the context of the goal? Reply with ONLY:\n"
-                    f"YES\n"
-                    f"or\n"
-                    f"NO: <one-line reason>"
+                    f"Step result (first 500 chars): {result_summary[:500]}"
+                    f"{remaining_desc}\n\n"
+                    f"Answer TWO questions:\n"
+                    f"1. Does this result meaningfully address the step instruction?\n"
+                    f"2. Based on this result, should the remaining plan steps be "
+                    f"adjusted? (e.g. result reveals the goal is already achieved, "
+                    f"or the next steps are now wrong/unnecessary)\n\n"
+                    f"Reply with ONLY one of:\n"
+                    f"RELEVANT\n"
+                    f"RELEVANT-ADJUST: <reason to adjust plan>\n"
+                    f"IRRELEVANT: <reason>"
                 )}],
                 system=(
-                    "You validate whether a task step produced relevant output. "
-                    "Be lenient — partial results are OK. Only say NO if the "
-                    "result is clearly unrelated to what was asked for. "
-                    "Reply with YES or NO: reason."
+                    "You validate task step output and assess plan direction. "
+                    "Be lenient on relevance — partial results are OK. "
+                    "Only say IRRELEVANT if the result is clearly unrelated. "
+                    "Only say ADJUST if the result clearly changes what the "
+                    "remaining steps should do. Most of the time the plan is fine."
                 ),
-                max_tokens=60,
+                max_tokens=80,
             )
-            answer = result.text.strip()
-            if answer.upper().startswith("NO"):
-                reason = answer[3:].strip().lstrip(":").strip() if len(answer) > 3 else "Result not relevant"
-                return False, reason
-            return True, ""
+            answer = result.text.strip().upper()
+
+            if answer.startswith("IRRELEVANT"):
+                reason = result.text.strip()[11:].strip().lstrip(":").strip()
+                return False, False, reason or "Result not relevant"
+
+            if "ADJUST" in answer:
+                reason = result.text.strip()
+                # Extract reason after the colon
+                if ":" in reason:
+                    reason = reason.split(":", 1)[1].strip()
+                return True, True, reason or "Plan adjustment suggested"
+
+            return True, False, ""
         except Exception as e:
             logger.debug("Relevance check failed (allowing step): %s", e)
-            return True, ""
+            return True, False, ""
 
     # ------------------------------------------------------------------
     # Steering — redirect in-flight plans
@@ -499,16 +536,26 @@ class PlanExecutor:
 
                         executed_steps.add(idx)
 
-                        # ── Relevance check for intermediate steps ──
+                        # ── Relevance + reflection check for intermediate steps ──
                         # Only check steps whose output feeds into later
-                        # steps (intermediate).  If clearly irrelevant,
-                        # mark as failed so downstream steps skip instead
-                        # of processing garbage.
+                        # steps (intermediate).  Also assesses whether
+                        # the remaining plan should be adjusted based on
+                        # what this step returned.
+                        # Skip reflection during active iteration retries
+                        # to avoid disrupting the retry loop.
+                        _in_active_retry = bool(
+                            find_group_for_work_step(idx, iteration_groups)
+                            or (find_group_for_verify_step(idx, iteration_groups)
+                                and find_group_for_verify_step(idx, iteration_groups).attempt > 0)
+                        )
                         if (idx in _intermediate
-                                and results.get(idx, {}).get("status") == "completed"):
+                                and results.get(idx, {}).get("status") == "completed"
+                                and not _in_active_retry):
                             summary = results[idx].get("summary", "")
-                            relevant, reason = await self._check_result_relevance(
+                            remaining = steps[idx + 1:] if idx + 1 < len(steps) else []
+                            relevant, should_adjust, reason = await self._check_result_relevance(
                                 st.instruction, summary, user_message,
+                                remaining_steps=remaining,
                             )
                             if not relevant:
                                 results[idx] = {
@@ -524,6 +571,20 @@ class PlanExecutor:
                                     ),
                                     "plan_step": idx,
                                 }
+                            elif should_adjust:
+                                yield {
+                                    "type": "status",
+                                    "content": (
+                                        f"Step {idx + 1} result suggests adjusting "
+                                        f"the plan: {reason}"
+                                    ),
+                                    "plan_step": idx,
+                                }
+                                # Inject a synthetic steering message so the
+                                # existing replan machinery handles it.
+                                self._session.steering_queue.put_nowait(
+                                    f"[auto-reflection after step {idx + 1}] {reason}"
+                                )
 
                         # ── Iteration: check for verify success after retry ──
                         verify_group = find_group_for_verify_step(idx, iteration_groups)
@@ -592,7 +653,7 @@ class PlanExecutor:
                                 )
                                 if new_steps is not None:
                                     steps = new_steps
-                                    sub_tasks = _build_sub_tasks(steps)
+                                    sub_tasks = self._build_sub_tasks_from_steps(steps)
                                     iteration_groups = parse_iteration_groups(
                                         sub_tasks,
                                         max_attempts=config.autonomous.goal_iteration_max_attempts,
@@ -657,7 +718,7 @@ class PlanExecutor:
                         )
                         if new_steps is not None:
                             steps = new_steps
-                            sub_tasks = _build_sub_tasks(steps)
+                            sub_tasks = self._build_sub_tasks_from_steps(steps)
                             iteration_groups = parse_iteration_groups(
                                 sub_tasks,
                                 max_attempts=config.autonomous.goal_iteration_max_attempts,
