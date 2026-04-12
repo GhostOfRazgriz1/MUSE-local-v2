@@ -4,9 +4,10 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator, Protocol
 
 # Shared timeout for all LLM provider HTTP clients.
-# Total: 120s for slow models (long reasoning, large outputs).
+# Local models (Ollama) are slower than cloud — 300s avoids timeouts
+# on thinking models or large generation requests.
 # Connect: 10s to fail fast if the endpoint is unreachable.
-LLM_TIMEOUT_TOTAL = 120.0
+LLM_TIMEOUT_TOTAL = 300.0
 LLM_TIMEOUT_CONNECT = 10.0
 
 

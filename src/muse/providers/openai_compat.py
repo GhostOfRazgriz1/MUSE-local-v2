@@ -97,7 +97,21 @@ class OpenAICompatibleProvider:
         choices = data.get("choices", [])
         if not choices:
             raise ProviderError(f"[{self.name}] No choices in response.")
-        text = choices[0].get("message", {}).get("content", "")
+        message = choices[0].get("message", {})
+        text = message.get("content", "")
+
+        # Thinking models (e.g. Qwen3.5) may put the answer in a
+        # "reasoning" field and leave "content" empty, or embed
+        # <think>...</think> blocks in the content itself.
+        if not text and message.get("reasoning"):
+            text = message["reasoning"]
+
+        # Strip <think>...</think> blocks from inline-thinking models
+        if "<think>" in text:
+            import re
+            cleaned = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
+            if cleaned:
+                text = cleaned
 
         usage = data.get("usage", {})
         tokens_in = usage.get("prompt_tokens", 0)
