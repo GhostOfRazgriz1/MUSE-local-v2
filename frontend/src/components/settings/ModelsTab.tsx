@@ -2,28 +2,14 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   IconChevronDown,
   IconChevronRight,
-  IconEye,
-  IconEyeOff,
-  IconTrash,
+  IconX,
   IconCheck,
   IconAlertCircle,
-  IconX,
 } from "../Icons";
 import { apiFetch } from "../../hooks/useApiToken";
-import { useLocale } from "../../i18n";
 import { SettingsSection, SettingsLoader, ModelInfo } from "./shared";
 
-/* ─── Models Tab ─── */
-
-interface ProviderStatus {
-  id: string;
-  name: string;
-  env_var: string;
-  source: "env" | "vault" | null;
-  is_custom?: boolean;
-  base_url?: string;
-  api_style?: string;
-}
+/* ─── Models Tab (Local Only) ─── */
 
 function ModelsTab() {
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -33,23 +19,27 @@ function ModelsTab() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [gallerySearch, setGallerySearch] = useState("");
-  const { t } = useLocale();
+  const [serverStatus, setServerStatus] = useState<"checking" | "online" | "offline">("checking");
+  const [connRuntime, setConnRuntime] = useState("ollama");
+  const [connAddress, setConnAddress] = useState("localhost");
+  const [connPort, setConnPort] = useState("11434");
+  const [connEditing, setConnEditing] = useState(false);
+  const [connBusy, setConnBusy] = useState(false);
+  const [connError, setConnError] = useState("");
+  const [connSuccess, setConnSuccess] = useState(false);
+  const [maxWorkers, setMaxWorkers] = useState(2);
 
   const fetchModels = useCallback(() => {
     apiFetch("/api/settings/models")
       .then((r) => r.json())
-      .then((res) => setModels(res.models || []))
-      .catch(() => {});
-  }, []);
-
-  const fetchProviders = useCallback(() => {
-    apiFetch("/api/settings/providers")
-      .then((r) => r.json())
-      .then((res) => setProviders(res.providers || []))
-      .catch(() => {});
+      .then((res) => {
+        const m = res.models || [];
+        setModels(m);
+        setServerStatus(m.length > 0 ? "online" : "offline");
+      })
+      .catch(() => setServerStatus("offline"));
   }, []);
 
   useEffect(() => {
@@ -58,22 +48,24 @@ function ModelsTab() {
       apiFetch("/api/settings/models/overrides").then((r) => r.json()),
       apiFetch("/api/skills").then((r) => r.json()),
       apiFetch("/api/settings").then((r) => r.json()),
-      apiFetch("/api/settings/providers").then((r) => r.json()),
+      apiFetch("/api/settings/local").then((r) => r.json()).catch(() => ({})),
     ])
-      .then(([modelsRes, overridesRes, skillsRes, settingsRes, providersRes]) => {
-        setModels(modelsRes.models || []);
+      .then(([modelsRes, overridesRes, skillsRes, settingsRes, localRes]) => {
+        const m = modelsRes.models || [];
+        setModels(m);
+        setServerStatus(m.length > 0 ? "online" : "offline");
         setOverrides(overridesRes.overrides || {});
         const skillsList = Array.isArray(skillsRes) ? skillsRes : skillsRes.skills || [];
         setSkills(skillsList);
         setDefaultModel(settingsRes.settings?.default_model || "");
-        setProviders(providersRes.providers || []);
+        if (localRes.runtime) setConnRuntime(localRes.runtime);
+        if (localRes.address) setConnAddress(localRes.address);
+        if (localRes.port) setConnPort(String(localRes.port));
+        if (localRes.max_workers) setMaxWorkers(localRes.max_workers);
       })
-      .catch(() => setLoadError("load_error"))
+      .catch(() => setLoadError("Failed to load settings. Check your connection."))
       .finally(() => setLoading(false));
   }, []);
-
-  // Local-only build: suppress unused refs from cloud provider UI
-  void providers; void fetchModels; void fetchProviders;
 
   const saveDefaultModel = async (modelId: string) => {
     setDefaultModel(modelId);
@@ -99,43 +91,28 @@ function ModelsTab() {
     } catch {}
   };
 
-  // ── All hooks must be above early returns ──
-
-  // Models from active providers only — filter on served_by (the provider
-  // that actually serves the model, e.g. "openrouter" for all OpenRouter models)
-  const activeProviderIds = useMemo(
-    () => new Set(providers.filter((p) => p.source !== null).map((p) => p.id)),
-    [providers],
-  );
-  const activeModels = useMemo(
-    () => models.filter((m) => activeProviderIds.has(m.served_by)),
-    [models, activeProviderIds],
-  );
-
-  // Group active models by provider
-  const activeGrouped = useMemo(() => {
-    return activeModels.reduce<Record<string, ModelInfo[]>>((acc, m) => {
-      const key = m.provider || "other";
+  // Group models by provider
+  const grouped = useMemo(() => {
+    return models.reduce<Record<string, ModelInfo[]>>((acc, m) => {
+      const key = m.provider || "local";
       (acc[key] ??= []).push(m);
       return acc;
     }, {});
-  }, [activeModels]);
+  }, [models]);
 
   // Search for the model gallery
   const filteredGalleryModels = useMemo(() => {
-    if (!gallerySearch.trim()) return activeGrouped;
+    if (!gallerySearch.trim()) return grouped;
     const q = gallerySearch.toLowerCase();
     const result: Record<string, ModelInfo[]> = {};
-    for (const [prov, ms] of Object.entries(activeGrouped)) {
+    for (const [prov, ms] of Object.entries(grouped)) {
       const filtered = ms.filter(
         (m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q),
       );
       if (filtered.length > 0) result[prov] = filtered;
     }
     return result;
-  }, [activeGrouped, gallerySearch]);
-
-  // ── Early returns (after all hooks) ──
+  }, [grouped, gallerySearch]);
 
   if (loading) return <SettingsLoader />;
   if (loadError) {
@@ -143,89 +120,173 @@ function ModelsTab() {
       <div className="settings-tab">
         <div className="settings-error-state">
           <IconAlertCircle size={20} />
-          <span>{t("settings_failed_load")}</span>
+          <span>{loadError}</span>
           <button className="btn btn-sm btn-primary" onClick={() => window.location.reload()}>
-            {t("retry")}
+            Retry
           </button>
         </div>
       </div>
     );
   }
 
-  const formatPrice = (price: number) => {
-    if (!price) return "Free";
-    return `$${(price * 1_000_000).toFixed(2)}/M`;
-  };
-
   const filteredProviderNames = Object.keys(filteredGalleryModels);
 
   return (
     <div className="settings-tab">
       <div className="settings-tab-header">
-        <h2>{t("settings_models")}</h2>
-        <p>{t("settings_models_desc")}</p>
+        <h2>Models</h2>
+        <p>MUSE runs on local models via Ollama or vLLM. No API keys needed.</p>
       </div>
 
-      {/* ═══ SIMPLE VIEW ═══ */}
-
-      {/* Local-only: show Ollama status instead of API key management */}
+      {/* Local server connection */}
       <SettingsSection
-        title="Local Provider"
-        description="Using Ollama for local model inference. Make sure Ollama is running on localhost:11434."
+        title="Local Server"
+        description="Your local LLM server connection."
       >
         <div className="provider-keys-list">
           <div className="provider-key-row">
             <div className="provider-key-info">
-              <span className="provider-key-name">Ollama</span>
-              <span className="provider-key-badge badge-env">local</span>
+              <span className="provider-key-name">
+                {connRuntime.charAt(0).toUpperCase() + connRuntime.slice(1)} — {connAddress}:{connPort}
+              </span>
+              {serverStatus === "checking" && (
+                <span className="provider-key-badge badge-none">checking...</span>
+              )}
+              {serverStatus === "online" && (
+                <span className="provider-key-badge badge-vault">
+                  <IconCheck size={10} /> {models.length} model{models.length !== 1 ? "s" : ""}
+                </span>
+              )}
+              {serverStatus === "offline" && (
+                <span className="provider-key-badge badge-none">not connected</span>
+              )}
             </div>
+            <div className="provider-key-actions">
+              <button className="btn btn-sm btn-ghost" onClick={fetchModels}>Refresh</button>
+              <button className="btn btn-sm btn-ghost" onClick={() => setConnEditing(!connEditing)}>
+                {connEditing ? "Cancel" : "Configure"}
+              </button>
+            </div>
+          </div>
+          {connEditing && (
+            <div className="custom-provider-form">
+              <div className="custom-provider-field">
+                <label className="custom-provider-label">Runtime</label>
+                <div className="settings-select-wrapper">
+                  <select className="settings-select" value={connRuntime} onChange={(e) => setConnRuntime(e.target.value)}>
+                    <option value="ollama">Ollama</option>
+                    <option value="vllm">vLLM</option>
+                    <option value="llamacpp">llama.cpp</option>
+                    <option value="other">Other (OpenAI-compatible)</option>
+                  </select>
+                  <IconChevronDown size={14} className="settings-select-icon" />
+                </div>
+              </div>
+              <div className="custom-provider-field">
+                <label className="custom-provider-label">Address</label>
+                <input className="settings-input" type="text" placeholder="localhost" value={connAddress}
+                  onChange={(e) => { setConnAddress(e.target.value); setConnError(""); }} />
+              </div>
+              <div className="custom-provider-field">
+                <label className="custom-provider-label">Port</label>
+                <input className="settings-input" type="text" placeholder="11434" value={connPort}
+                  onChange={(e) => { setConnPort(e.target.value); setConnError(""); }} />
+              </div>
+              {connError && <span className="provider-key-error"><IconAlertCircle size={12} /> {connError}</span>}
+              {connSuccess && <span className="provider-key-error" style={{ color: "var(--success)" }}><IconCheck size={12} /> Connection saved and models refreshed.</span>}
+              <div className="custom-provider-actions">
+                <button className="btn btn-sm btn-primary" disabled={connBusy || !connAddress.trim()} onClick={async () => {
+                  setConnBusy(true); setConnError(""); setConnSuccess(false);
+                  try {
+                    const testRes = await apiFetch("/api/settings/local/test", {
+                      method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ address: connAddress.trim(), port: parseInt(connPort) || 11434 }),
+                    });
+                    const testData = await testRes.json();
+                    if (!testRes.ok || testData.error) { setConnError(testData.error || testData.detail || "Connection failed"); setConnBusy(false); return; }
+                    const saveRes = await apiFetch("/api/settings/local", {
+                      method: "PUT", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ runtime: connRuntime, address: connAddress.trim(), port: parseInt(connPort) || 11434, models: (testData.models || []).map((m: { id: string }) => m.id), max_workers: maxWorkers }),
+                    });
+                    if (!saveRes.ok) { const d = await saveRes.json().catch(() => ({})); setConnError(d.detail || "Failed to save"); setConnBusy(false); return; }
+                    setConnSuccess(true); fetchModels();
+                    setTimeout(() => { setConnEditing(false); setConnSuccess(false); }, 1500);
+                  } catch { setConnError("Could not reach the server. Check address and port."); }
+                  setConnBusy(false);
+                }}>{connBusy ? "Testing..." : "Test & Save"}</button>
+                <button className="btn btn-sm btn-ghost" onClick={() => { setConnEditing(false); setConnError(""); }}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="settings-field" style={{ marginTop: 12 }}>
+          <label className="settings-label">Max Concurrent Tasks</label>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              className="settings-input"
+              type="number"
+              min={1}
+              max={16}
+              value={maxWorkers}
+              style={{ width: 80 }}
+              onChange={(e) => {
+                const v = Math.max(1, Math.min(16, parseInt(e.target.value) || 1));
+                setMaxWorkers(v);
+              }}
+              onBlur={async () => {
+                try {
+                  await apiFetch("/api/settings/local", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ runtime: connRuntime, address: connAddress.trim(), port: parseInt(connPort) || 11434, models: models.map((m) => m.id), max_workers: maxWorkers }),
+                  });
+                } catch {}
+              }}
+            />
+          </div>
+          <div className="settings-hint">
+            How many skills can run in parallel. Lower values are more reliable on smaller models. Default: 2.
           </div>
         </div>
       </SettingsSection>
 
-      {/* Default model — only from active providers */}
-      <SettingsSection title={t("settings_model")} description={t("settings_model_desc")}>
-        {activeModels.length === 0 ? (
+      {/* Default model */}
+      <SettingsSection title="Model" description="The AI model used for chat and tasks.">
+        {models.length === 0 ? (
           <div className="settings-empty-state">
-            {t("settings_no_models")}
+            No models available. Install Ollama and run: <code>ollama pull llama3.2</code>
           </div>
         ) : (
           <div className="settings-field">
             <SearchableModelSelect
-              models={activeModels}
-              grouped={activeGrouped}
+              models={models}
+              grouped={grouped}
               value={defaultModel}
               onChange={saveDefaultModel}
-              placeholder={t("settings_auto_recommended")}
+              placeholder="Auto (first available)"
             />
-            {defaultModel && models.find((m) => m.id === defaultModel) && (
-              <div className="model-details">
-                <ModelCard model={models.find((m) => m.id === defaultModel)!} formatPrice={formatPrice} />
-              </div>
-            )}
-            {saving && <span className="settings-saving">{t("saving")}</span>}
+            {saving && <span className="settings-saving">Saving...</span>}
           </div>
         )}
       </SettingsSection>
 
-      {/* ═══ ADVANCED TOGGLE ═══ */}
+      {/* Advanced */}
       <div className="settings-advanced-toggle">
         <button
           className="settings-advanced-btn"
           onClick={() => setAdvancedOpen(!advancedOpen)}
         >
           {advancedOpen ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-          <span>{t("settings_advanced")}</span>
+          <span>Advanced settings</span>
         </button>
       </div>
 
       {advancedOpen && (
         <div className="settings-advanced-panel">
-          {/* Per-skill overrides — also filtered to active providers */}
-          {skills.length > 0 && activeModels.length > 0 && (
+          {skills.length > 0 && models.length > 0 && (
             <SettingsSection
-              title={t("settings_per_skill")}
-              description={t("settings_per_skill_desc")}
+              title="Per-Skill Model Overrides"
+              description="Assign a specific model to individual skills."
             >
               <div className="override-list">
                 {skills.map((skill) => (
@@ -233,11 +294,11 @@ function ModelsTab() {
                     <div className="override-skill">{skill.name || skill.id}</div>
                     <div className="override-select">
                       <SearchableModelSelect
-                        models={activeModels}
-                        grouped={activeGrouped}
+                        models={models}
+                        grouped={grouped}
                         value={overrides[skill.id] || ""}
                         onChange={(v) => saveOverride(skill.id, v)}
-                        placeholder={t("settings_default_model")}
+                        placeholder="Default"
                       />
                     </div>
                   </div>
@@ -246,10 +307,9 @@ function ModelsTab() {
             </SettingsSection>
           )}
 
-          {/* Model gallery — active providers only, with search */}
-          {activeModels.length > 0 && (
-            <SettingsSection title="All Available Models" description="Models from your connected providers.">
-              {activeModels.length > 10 && (
+          {models.length > 0 && (
+            <SettingsSection title="Installed Models" description="Models available on your local server.">
+              {models.length > 10 && (
                 <input
                   className="settings-input model-search-input"
                   type="text"
@@ -263,10 +323,9 @@ function ModelsTab() {
               ) : (
                 filteredProviderNames.map((prov) => (
                   <div key={prov} className="provider-group">
-                    <h3 className="provider-group-label">{formatProviderLabel(prov)}</h3>
                     <div className="model-grid">
                       {filteredGalleryModels[prov].map((m) => (
-                        <ModelCard key={m.id} model={m} formatPrice={formatPrice} />
+                        <ModelCard key={m.id} model={m} />
                       ))}
                     </div>
                   </div>
@@ -280,308 +339,15 @@ function ModelsTab() {
   );
 }
 
-/* ─── Provider API Key Row ─── */
-
-// Cloud provider UI — unused in local-only build, kept for reference
-// @ts-ignore: unused in local build
-function ProviderKeyRow({
-  provider,
-  onKeyChanged,
-  onDeleted,
-}: {
-  provider: ProviderStatus;
-  onKeyChanged: () => void;
-  onDeleted?: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [keyValue, setKeyValue] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [visible, setVisible] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
-
-  const save = async () => {
-    if (!keyValue.trim()) return;
-    setBusy(true);
-    setError("");
-    setSuccess(false);
-    try {
-      const res = await apiFetch(`/api/settings/providers/${provider.id}/key`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: keyValue }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.detail || "Failed to save key");
-        setBusy(false);
-        return;
-      }
-      setSuccess(true);
-      setTimeout(() => {
-        setEditing(false);
-        setKeyValue("");
-        setSuccess(false);
-        onKeyChanged();
-      }, 600);
-    } catch {
-      setError("Connection failed");
-    }
-    setBusy(false);
-  };
-
-  const remove = async () => {
-    setBusy(true);
-    try {
-      if (provider.is_custom) {
-        // Delete the custom provider definition entirely
-        await apiFetch(`/api/settings/providers/custom/${provider.id}`, { method: "DELETE" });
-      } else {
-        await apiFetch(`/api/settings/providers/${provider.id}/key`, { method: "DELETE" });
-      }
-      onKeyChanged();
-      if (onDeleted) onDeleted();
-    } catch {}
-    setBusy(false);
-  };
-
-  const label = provider.is_custom ? provider.name : formatProviderLabel(provider.id);
-
-  return (
-    <div className="provider-key-row">
-      <div className="provider-key-info">
-        <span className="provider-key-name">{label}</span>
-        {provider.is_custom && (
-          <span className="provider-key-badge badge-custom">custom</span>
-        )}
-        {provider.source === "env" && (
-          <span className="provider-key-badge badge-env">env</span>
-        )}
-        {provider.source === "vault" && (
-          <span className="provider-key-badge badge-vault">
-            <IconCheck size={10} /> connected
-          </span>
-        )}
-        {!provider.source && (
-          <span className="provider-key-badge badge-none">not set</span>
-        )}
-      </div>
-
-      <div className="provider-key-actions">
-        {editing ? (
-          <div className="provider-key-input-row">
-            <div className="provider-key-input-wrapper">
-              <input
-                className={`provider-key-input ${error ? "input-error" : ""}`}
-                type={visible ? "text" : "password"}
-                placeholder={provider.env_var}
-                value={keyValue}
-                onChange={(e) => { setKeyValue(e.target.value); setError(""); }}
-                onKeyDown={(e) => e.key === "Enter" && save()}
-                autoFocus
-              />
-              <button
-                className="provider-key-vis-btn"
-                onClick={() => setVisible((v) => !v)}
-                title={visible ? "Hide" : "Show"}
-              >
-                {visible ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-              </button>
-            </div>
-            <button
-              className="btn btn-sm btn-primary"
-              onClick={save}
-              disabled={busy || !keyValue.trim()}
-            >
-              {busy ? "Saving..." : success ? "Connected!" : "Save"}
-            </button>
-            <button
-              className="btn btn-sm btn-ghost"
-              onClick={() => { setEditing(false); setKeyValue(""); setError(""); }}
-            >
-              Cancel
-            </button>
-            {error && (
-              <span className="provider-key-error">
-                <IconAlertCircle size={12} /> {error}
-              </span>
-            )}
-          </div>
-        ) : (
-          <div className="provider-key-btn-group">
-            {provider.source !== "env" && (
-              <button className="btn btn-sm btn-ghost" onClick={() => setEditing(true)}>
-                {provider.source ? "Update" : "Add key"}
-              </button>
-            )}
-            {(provider.source === "vault" || provider.is_custom) && (
-              <button className="provider-key-delete" onClick={remove} disabled={busy} title={provider.is_custom ? "Remove provider" : "Remove key"}>
-                <IconTrash size={13} />
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ─── Add Custom Provider Form ─── */
-
-// @ts-ignore: unused in local build
-function AddCustomProviderForm({ onAdded }: { onAdded: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [apiStyle, setApiStyle] = useState<"openai" | "anthropic">("openai");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const reset = () => {
-    setName("");
-    setBaseUrl("");
-    setApiKey("");
-    setApiStyle("openai");
-    setError("");
-    setOpen(false);
-  };
-
-  const submit = async () => {
-    if (!name.trim() || !baseUrl.trim()) {
-      setError("Name and Base URL are required");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      const res = await apiFetch("/api/settings/providers/custom", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          base_url: baseUrl.trim(),
-          api_key: apiKey.trim(),
-          api_style: apiStyle,
-        }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.detail || "Failed to add provider");
-        setBusy(false);
-        return;
-      }
-      reset();
-      onAdded();
-    } catch {
-      setError("Connection failed");
-    }
-    setBusy(false);
-  };
-
-  if (!open) {
-    return (
-      <button className="btn btn-sm btn-ghost custom-provider-add-btn" onClick={() => setOpen(true)}>
-        + Add custom provider
-      </button>
-    );
-  }
-
-  return (
-    <div className="custom-provider-form">
-      <div className="custom-provider-field">
-        <label className="custom-provider-label">Name</label>
-        <input
-          className="settings-input"
-          type="text"
-          placeholder="e.g. My Ollama, Together AI"
-          value={name}
-          onChange={(e) => { setName(e.target.value); setError(""); }}
-        />
-      </div>
-      <div className="custom-provider-field">
-        <label className="custom-provider-label">Base URL</label>
-        <input
-          className="settings-input"
-          type="text"
-          placeholder="e.g. http://localhost:11434/v1"
-          value={baseUrl}
-          onChange={(e) => { setBaseUrl(e.target.value); setError(""); }}
-        />
-      </div>
-      <div className="custom-provider-field">
-        <label className="custom-provider-label">API Key <span style={{ opacity: 0.5 }}>(optional for local models)</span></label>
-        <input
-          className="settings-input"
-          type="password"
-          placeholder="sk-..."
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-        />
-      </div>
-      <div className="custom-provider-field">
-        <label className="custom-provider-label">API Format</label>
-        <div className="settings-select-wrapper">
-          <select
-            className="settings-select"
-            value={apiStyle}
-            onChange={(e) => setApiStyle(e.target.value as "openai" | "anthropic")}
-          >
-            <option value="openai">OpenAI-compatible (most providers)</option>
-            <option value="anthropic">Anthropic</option>
-          </select>
-          <IconChevronDown size={14} className="settings-select-icon" />
-        </div>
-      </div>
-      {error && (
-        <span className="provider-key-error">
-          <IconAlertCircle size={12} /> {error}
-        </span>
-      )}
-      <div className="custom-provider-actions">
-        <button className="btn btn-sm btn-primary" onClick={submit} disabled={busy || !name.trim() || !baseUrl.trim()}>
-          {busy ? "Adding..." : "Add provider"}
-        </button>
-        <button className="btn btn-sm btn-ghost" onClick={reset}>Cancel</button>
-      </div>
-    </div>
-  );
-}
-
-const PROVIDER_LABELS: Record<string, string> = {
-  openai: "OpenAI",
-  anthropic: "Anthropic",
-  gemini: "Gemini",
-  alibaba: "Alibaba / Qwen",
-  deepseek: "DeepSeek",
-  bytedance: "ByteDance / Doubao",
-  minimax: "MiniMax",
-  openrouter: "OpenRouter",
-};
-
-function formatProviderLabel(provider: string): string {
-  return PROVIDER_LABELS[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
-}
-
-function ModelCard({
-  model,
-  formatPrice,
-}: {
-  model: ModelInfo;
-  formatPrice?: (p: number) => string;
-}) {
-  const fmt = formatPrice || ((p: number) => `$${(p * 1_000_000).toFixed(2)}/M`);
+function ModelCard({ model }: { model: ModelInfo }) {
   return (
     <div className="model-card">
       <div className="model-card-header">
         <div className="model-card-name">{model.name}</div>
-        <span className="model-card-provider">{formatProviderLabel(model.provider)}</span>
       </div>
       <div className="model-card-id">{model.id}</div>
       <div className="model-card-stats">
         <span>Context: {(model.context_window / 1000).toFixed(0)}K</span>
-        <span>In: {fmt(model.input_price)}</span>
-        <span>Out: {fmt(model.output_price)}</span>
       </div>
     </div>
   );
@@ -607,7 +373,6 @@ function SearchableModelSelect({
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
@@ -620,7 +385,6 @@ function SearchableModelSelect({
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  // Focus input when opened
   useEffect(() => {
     if (open && inputRef.current) inputRef.current.focus();
   }, [open]);
@@ -689,7 +453,6 @@ function SearchableModelSelect({
           </div>
 
           <div className="sms-options">
-            {/* Empty / default option */}
             <button
               className={`sms-option ${!value ? "sms-option-active" : ""}`}
               onClick={() => select("")}
@@ -703,7 +466,6 @@ function SearchableModelSelect({
             ) : (
               filteredProviders.map((prov) => (
                 <div key={prov} className="sms-group">
-                  <div className="sms-group-label">{formatProviderLabel(prov)}</div>
                   {filteredGrouped[prov].map((m) => (
                     <button
                       key={m.id}

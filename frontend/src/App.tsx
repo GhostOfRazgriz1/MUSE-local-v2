@@ -130,10 +130,14 @@ function App() {
     if (sessionId) setSessionUpdateTrigger((n) => n + 1);
   }, [sessionId]);
 
-  // Local-only build: no cloud API keys needed, skip setup entirely.
-  // The local provider (Ollama) is always available.
+  // Check if local server is configured — if not, show setup card
   useEffect(() => {
-    setNeedsSetup(false);
+    apiFetch("/api/settings/local")
+      .then((r) => r.json())
+      .then((data) => {
+        setNeedsSetup(data.config === null);
+      })
+      .catch(() => setNeedsSetup(false));
   }, []);
 
   // Close task popover when clicking outside

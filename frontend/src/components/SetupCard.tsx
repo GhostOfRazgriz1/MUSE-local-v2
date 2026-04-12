@@ -1,69 +1,110 @@
 /**
- * First-run setup card — shown when no LLM provider is configured.
+ * First-run setup card — configure local LLM server.
  *
- * Guides the user to paste an API key so the agent can start working.
- * Once a key is saved, calls onComplete() so the parent can switch to
- * the normal chat view.
+ * Lets the user select a runtime (Ollama/vLLM/llama.cpp/Other),
+ * set address and port, add model names, and configure max workers.
  */
 
 import React, { useState } from "react";
-import { IconBot, IconKey, IconEye, IconEyeOff, IconCheck } from "./Icons";
+import { IconBot, IconCheck, IconAlertCircle, IconX, IconPlus } from "./Icons";
 import { apiFetch } from "../hooks/useApiToken";
-import { useLocale } from "../i18n";
 
 interface SetupCardProps {
   onComplete: () => void;
 }
 
-const PROVIDERS = [
-  { id: "openrouter", label: "OpenRouter", hint: "openrouter.ai/keys — works with all models", recommended: true },
-  { id: "anthropic",  label: "Anthropic",  hint: "console.anthropic.com — Claude models" },
-  { id: "openai",     label: "OpenAI",     hint: "platform.openai.com — GPT models" },
-  { id: "gemini",     label: "Google Gemini", hint: "aistudio.google.com — Gemini models" },
-  { id: "deepseek",   label: "DeepSeek",   hint: "platform.deepseek.com — DeepSeek models" },
-  { id: "alibaba",    label: "Alibaba (DashScope)", hint: "dashscope.console.aliyun.com — Qwen models" },
-  { id: "bytedance",  label: "ByteDance (Volcengine)", hint: "console.volcengine.com — Doubao models" },
-  { id: "minimax",    label: "MiniMax",    hint: "platform.minimaxi.com — MiniMax models" },
+const RUNTIMES = [
+  { id: "ollama", label: "Ollama", defaultPort: 11434 },
+  { id: "vllm", label: "vLLM", defaultPort: 8000 },
+  { id: "llama.cpp", label: "llama.cpp", defaultPort: 8080 },
+  { id: "other", label: "Other (OpenAI Compatible)", defaultPort: 8000 },
 ];
 
 export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
-  const { t } = useLocale();
-  const [selectedProvider, setSelectedProvider] = useState("openrouter");
-  const [keyValue, setKeyValue] = useState("");
-  const [visible, setVisible] = useState(false);
+  const [runtime, setRuntime] = useState("ollama");
+  const [address, setAddress] = useState("localhost");
+  const [port, setPort] = useState(11434);
+  const [modelInput, setModelInput] = useState("");
+  const [models, setModels] = useState<string[]>([]);
+  const [maxWorkers, setMaxWorkers] = useState(2);
+  const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [testResult, setTestResult] = useState<{ status: string; message?: string; models?: string[] } | null>(null);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
 
-  const handleSave = async () => {
-    if (!keyValue.trim()) return;
-    setSaving(true);
-    setError("");
+  const handleRuntimeChange = (newRuntime: string) => {
+    setRuntime(newRuntime);
+    const rt = RUNTIMES.find((r) => r.id === newRuntime);
+    if (rt) setPort(rt.defaultPort);
+    setTestResult(null);
+  };
 
-    try {
-      const res = await apiFetch(`/api/settings/providers/${selectedProvider}/key`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: keyValue.trim() }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || "Failed to save key");
-        setSaving(false);
-        return;
-      }
-
-      setDone(true);
-      // Brief pause to show success, then transition to chat
-      setTimeout(() => onComplete(), 800);
-    } catch {
-      setError(t("setup_connection_failed"));
-      setSaving(false);
+  const addModel = () => {
+    const name = modelInput.trim();
+    if (name && !models.includes(name)) {
+      setModels([...models, name]);
+      setModelInput("");
     }
   };
 
-  const provider = PROVIDERS.find((p) => p.id === selectedProvider)!;
+  const removeModel = (name: string) => {
+    setModels(models.filter((m) => m !== name));
+  };
+
+  const testConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    setError("");
+    try {
+      const res = await apiFetch("/api/settings/local/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, port }),
+      });
+      const data = await res.json();
+      setTestResult(data);
+      if (data.status === "ok" && data.models?.length > 0 && models.length === 0) {
+        setModels(data.models);
+      }
+    } catch {
+      setTestResult({ status: "error", message: "Cannot reach MUSE server." });
+    }
+    setTesting(false);
+  };
+
+  const handleSave = async () => {
+    if (models.length === 0) {
+      setError("Add at least one model name.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const res = await apiFetch("/api/settings/local", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runtime,
+          address,
+          port,
+          models,
+          max_workers: maxWorkers,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.detail || "Failed to save configuration");
+        setSaving(false);
+        return;
+      }
+      setDone(true);
+      setTimeout(() => onComplete(), 800);
+    } catch {
+      setError("Connection failed — is the MUSE server running?");
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="setup-card-overlay">
@@ -71,56 +112,138 @@ export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
         <div className="setup-card-icon">
           <IconBot size={32} />
         </div>
-        <h2 className="setup-card-title">{t("setup_welcome")}</h2>
+        <h2 className="setup-card-title">Welcome to MUSE</h2>
         <p className="setup-card-desc">
-          {t("setup_desc")}
+          Configure your local LLM server. Everything runs on your machine.
         </p>
 
-        {/* Provider selector */}
-        <div className="setup-provider-select-wrapper">
-          <select
-            className="setup-provider-select"
-            value={selectedProvider}
-            onChange={(e) => setSelectedProvider(e.target.value)}
-          >
-            {PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}{p.recommended ? ` (${t("setup_recommended")})` : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Key input */}
         <div className="setup-key-section">
-          <label className="setup-key-label">
-            <IconKey size={14} />
-            {provider.label} {t("setup_api_key")}
-          </label>
-          <p className="setup-key-hint">
-            Get your key at <strong>{provider.hint.split(" — ")[0]}</strong>
-            {provider.hint.includes(" — ") && ` — ${provider.hint.split(" — ")[1]}`}
-          </p>
-          <div className="setup-key-input-row">
-            <div className="setup-key-input-wrapper">
+          {/* Runtime selector */}
+          <div className="setup-field">
+            <label className="setup-key-label">Runtime</label>
+            <div className="setup-provider-select-wrapper">
+              <select
+                className="setup-provider-select"
+                value={runtime}
+                onChange={(e) => handleRuntimeChange(e.target.value)}
+                disabled={done}
+              >
+                {RUNTIMES.map((r) => (
+                  <option key={r.id} value={r.id}>{r.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Address and Port */}
+          <div className="setup-field-row">
+            <div className="setup-field">
+              <label className="setup-key-label">Address</label>
               <input
-                className="setup-key-input"
-                type={visible ? "text" : "password"}
-                placeholder={t("setup_paste_key", { provider: provider.label })}
-                value={keyValue}
-                onChange={(e) => setKeyValue(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSave()}
-                autoFocus
+                className="setup-input"
+                type="text"
+                value={address}
+                onChange={(e) => { setAddress(e.target.value); setTestResult(null); }}
+                placeholder="localhost"
+                disabled={done}
+              />
+            </div>
+            <div className="setup-field setup-field-port">
+              <label className="setup-key-label">Port</label>
+              <input
+                className="setup-input"
+                type="number"
+                value={port}
+                onChange={(e) => { setPort(parseInt(e.target.value) || 0); setTestResult(null); }}
+                disabled={done}
+              />
+            </div>
+          </div>
+
+          {/* Test connection */}
+          <button
+            className="btn btn-sm btn-ghost setup-test-btn"
+            onClick={testConnection}
+            disabled={testing || done}
+          >
+            {testing ? "Testing..." : "Test Connection"}
+          </button>
+
+          {testResult && (
+            <div className={`setup-status ${testResult.status === "ok" ? "setup-status-ok" : "setup-status-err"}`}>
+              {testResult.status === "ok" ? (
+                <>
+                  <IconCheck size={14} />
+                  <span>Connected — {testResult.models?.length || 0} model(s) found</span>
+                </>
+              ) : (
+                <>
+                  <IconAlertCircle size={14} />
+                  <span>{testResult.message}</span>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Models */}
+          <div className="setup-field">
+            <label className="setup-key-label">Models</label>
+            <p className="setup-key-hint">
+              Add the model names you want to use (e.g. <strong>llama3.2</strong>, <strong>gemma2</strong>).
+              {runtime === "ollama" && " Make sure they're pulled with `ollama pull <name>`."}
+            </p>
+
+            <div className="setup-model-row">
+              <input
+                className="setup-input"
+                type="text"
+                placeholder="Model name"
+                value={modelInput}
+                onChange={(e) => setModelInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addModel(); } }}
                 disabled={done}
               />
               <button
-                className="setup-key-vis-btn"
-                onClick={() => setVisible((v) => !v)}
-                title={visible ? t("hide") : t("show")}
+                className="btn btn-sm btn-primary"
+                onClick={addModel}
+                disabled={!modelInput.trim() || done}
+                title="Add model"
               >
-                {visible ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                <IconPlus size={14} />
               </button>
             </div>
+
+            {models.length > 0 && (
+              <div className="setup-model-tags">
+                {models.map((m) => (
+                  <span key={m} className="setup-model-tag">
+                    {m}
+                    {!done && (
+                      <button onClick={() => removeModel(m)} title="Remove">
+                        <IconX size={10} />
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Max workers */}
+          <div className="setup-field">
+            <label className="setup-key-label">Max Concurrent Workers</label>
+            <p className="setup-key-hint">
+              How many tasks can run at once. Lower values use less memory.
+            </p>
+            <input
+              className="setup-input setup-input-sm"
+              type="number"
+              min={1}
+              max={16}
+              value={maxWorkers}
+              onChange={(e) => setMaxWorkers(Math.max(1, Math.min(16, parseInt(e.target.value) || 1)))}
+              disabled={done}
+            />
           </div>
 
           {error && <div className="setup-error">{error}</div>}
@@ -128,20 +251,20 @@ export const SetupCard: React.FC<SetupCardProps> = ({ onComplete }) => {
           <button
             className={`btn btn-primary setup-save-btn ${done ? "done" : ""}`}
             onClick={handleSave}
-            disabled={saving || !keyValue.trim() || done}
+            disabled={saving || models.length === 0 || done}
           >
             {done ? (
-              <><IconCheck size={16} /> {t("setup_connected")}</>
+              <><IconCheck size={16} /> Configured</>
             ) : saving ? (
-              t("setup_connecting")
+              "Saving..."
             ) : (
-              t("setup_connect")
+              "Save & Start"
             )}
           </button>
         </div>
 
         <p className="setup-footer">
-          {t("setup_footer")}
+          All data stays on your machine. No cloud, no API keys, no tracking.
         </p>
       </div>
     </div>
