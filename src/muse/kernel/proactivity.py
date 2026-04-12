@@ -40,7 +40,7 @@ DEFAULTS = {
     "proactivity.level1": "true",
     "proactivity.level2": "true",
     "proactivity.level3": "false",
-    "proactivity.llm_greeting": "true",
+    "proactivity.llm_greeting": "false",
     "proactivity.suggestion_budget": "10",
     "proactivity.action_budget": "3",
     "proactivity.level3_skills": "[]",
@@ -205,168 +205,109 @@ class ProactivityManager:
 
     # ── Level 1: Post-task suggestions ──────────────────────────
 
+    # Deterministic follow-up mappings: skill → likely next action.
+    # Replaces LLM call with zero-latency lookup.
+    _FOLLOW_UP_MAP: dict[str, tuple[str, str]] = {
+        "Search": ("Read a result in detail", "Webpage Reader"),
+        "Webpage Reader": ("Save key info for later", "Notes"),
+        "Code Runner": ("Run the tests", "Shell"),
+        "Shell": ("Check the output", "Files"),
+        "Files": ("Search for more context", "Search"),
+        "Email": ("Set a follow-up reminder", "Reminders"),
+        "Calendar": ("Set a reminder", "Reminders"),
+        "MCP Install": ("Try the new tool", "Search"),
+    }
+
     async def generate_post_task_suggestion(
         self,
         skill_id: str,
         action: str | None,
         result_summary: str,
     ) -> dict | None:
-        """After a task completes, ask LLM for a follow-up suggestion.
+        """After a task completes, suggest a follow-up action.
 
+        Uses deterministic skill→follow-up mapping instead of an LLM call.
         Returns ``{"id": "...", "content": "...", "skill_id": "..."}``
         or None if no suggestion is warranted.
         """
         if not await self.is_allowed(1):
             return None
 
-        # Build a compact skill catalog — only the current skill + common
-        # follow-ups. Saves ~200-300 tokens vs. the full catalog.
-        all_skills = self._registry.get("classifier")._skills
-        _COMMON_FOLLOW_UPS = {"Files", "Notes", "Search", "Reminders", "Email"}
-        relevant_ids = {skill_id} | _COMMON_FOLLOW_UPS
-        skill_catalog = "\n".join(
-            f"  - {sid}: {info['description']}"
-            for sid, info in all_skills.items()
-            if sid in relevant_ids
-        ) or self._registry.get("classifier")._cached_skill_lines
-
-        model = await self._registry.get("model_router").resolve_model()
-
-        try:
-            result = await self._registry.get("provider").complete(
-                model=model,
-                messages=[
-                    {"role": "user", "content": (
-                        f"Task done: {skill_id}"
-                        f"{('.' + action) if action else ''}\n"
-                        f"Result: {result_summary[:300]}\n\n"
-                        f"Skills:\n{skill_catalog}\n\n"
-                        "Suggest ONE follow-up or null.\n"
-                        "JSON only:\n"
-                        '{"suggestion":"...","skill_id":"..."}\n'
-                        'or {"suggestion":null}'
-                    )},
-                ],
-                system="Suggest a follow-up action. Reply with ONLY valid JSON.",
-                max_tokens=100,
-            )
-
-            raw = result.text.strip()
-            if raw.startswith("```"):
-                raw = re.sub(r"^```\w*\n?", "", raw)
-                raw = re.sub(r"\n?```$", "", raw).strip()
-
-            parsed = json.loads(raw)
-            suggestion = parsed.get("suggestion")
-            if not suggestion:
-                return None
-
-            sid = uuid.uuid4().hex[:12]
-            await self.consume(1)
-
-            get_tracer().event("proactivity", "suggestion_generated",
-                               level=1, suggestion=suggestion[:60])
-
-            return {
-                "id": sid,
-                "content": suggestion,
-                "skill_id": parsed.get("skill_id"),
-            }
-
-        except Exception as e:
-            logger.debug("Post-task suggestion failed: %s", e)
+        follow_up = self._FOLLOW_UP_MAP.get(skill_id)
+        if not follow_up:
             return None
+
+        suggestion, target_skill = follow_up
+        sid = uuid.uuid4().hex[:12]
+        await self.consume(1)
+
+        get_tracer().event("proactivity", "suggestion_generated",
+                           level=1, suggestion=suggestion[:60])
+
+        return {
+            "id": sid,
+            "content": suggestion,
+            "skill_id": target_skill,
+        }
 
     # ── Level 2: Idle nudges ────────────────────────────────────
 
     async def generate_idle_nudge(self) -> dict | None:
-        """Generate a contextual suggestion for an idle user."""
+        """Generate a contextual suggestion for an idle user.
+
+        Uses deterministic rules instead of LLM: check reminders first,
+        then offer time-appropriate suggestions.
+        """
         if not await self.is_allowed(2):
             return None
 
-        # Gather context
-        pattern_summary = self._registry.get("patterns").summarize_recent()
-        now = self._registry.get("kernel").user_now()
-        tz_name = self._registry.get("session").user_tz
-        time_ctx = f"Current time: {now.strftime('%A, %H:%M')} ({tz_name})"
-
-        # Check for pending reminders
-        reminder_ctx = ""
+        # Check for pending reminders first — highest priority
         try:
             keys = await self._registry.get("memory_repo").list_keys("Reminders", prefix="reminder.")
-            active = []
             for key in keys[:5]:
                 entry = await self._registry.get("memory_repo").get("Reminders", key)
                 if entry:
                     try:
                         data = json.loads(entry["value"])
                         if data.get("status") == "active":
-                            active.append(data.get("what", ""))
+                            sid = uuid.uuid4().hex[:12]
+                            await self.consume(2)
+                            return {
+                                "id": sid,
+                                "content": f"Reminder: {data.get('what', 'You have a pending reminder')}",
+                                "skill_id": "Reminders",
+                                "type": "remind",
+                            }
                     except (json.JSONDecodeError, TypeError):
                         pass
-            if active:
-                reminder_ctx = f"\nPending reminders: {', '.join(active)}"
-        except Exception as e:
-            logger.debug("Failed to fetch reminders for nudge: %s", e)
+        except Exception:
+            pass
 
-        # Get user profile
-        profile_ctx = ""
-        try:
-            profile_keys = await self._registry.get("memory_repo").list_keys("_profile")
-            for key in profile_keys[:5]:
-                entry = await self._registry.get("memory_repo").get("_profile", key)
-                if entry and entry.get("value"):
-                    profile_ctx += f"\n{key}: {entry['value']}"
-        except Exception as e:
-            logger.debug("Failed to fetch profile for nudge: %s", e)
+        # Time-based suggestions
+        now = self._registry.get("kernel").user_now()
+        hour = now.hour
 
-        skill_catalog = self._registry.get("classifier")._cached_skill_lines
-        model = await self._registry.get("model_router").resolve_model()
+        suggestion = None
+        if 8 <= hour <= 9:
+            suggestion = ("Check your schedule for today", "Calendar")
+        elif 17 <= hour <= 18:
+            suggestion = ("Review what you worked on today", "Search")
 
-        try:
-            result = await self._registry.get("provider").complete(
-                model=model,
-                messages=[
-                    {"role": "user", "content": (
-                        f"{time_ctx}\n{pattern_summary}"
-                        f"{reminder_ctx}{profile_ctx}\n\n"
-                        f"Skills:\n{skill_catalog}\n\n"
-                        "Suggest ONE action or null.\n"
-                        "JSON only:\n"
-                        '{"message":"...","skill_id":"...","type":"remind"}\n'
-                        'or {"message":null}'
-                    )},
-                ],
-                system="Suggest a helpful action. Reply with ONLY valid JSON.",
-                max_tokens=100,
-            )
-
-            raw = result.text.strip()
-            if raw.startswith("```"):
-                raw = re.sub(r"^```\w*\n?", "", raw)
-                raw = re.sub(r"\n?```$", "", raw).strip()
-
-            parsed = json.loads(raw)
-            message = parsed.get("message")
-            if not message:
-                return None
-
-            sid = uuid.uuid4().hex[:12]
-            await self.consume(2)
-
-            get_tracer().event("proactivity", "idle_nudge",
-                               message=message[:60])
-
-            return {
-                "id": sid,
-                "message": message,
-                "skill_id": parsed.get("skill_id"),
-                "type": parsed.get("type", "inform"),
-            }
-
-        except Exception as e:
-            logger.debug("Idle nudge generation failed: %s", e)
+        if not suggestion:
             return None
+
+        sid = uuid.uuid4().hex[:12]
+        await self.consume(2)
+
+        get_tracer().event("proactivity", "idle_nudge",
+                           message=suggestion[0][:60])
+
+        return {
+            "id": sid,
+            "content": suggestion[0],
+            "skill_id": suggestion[1],
+            "type": "inform",
+        }
 
     async def _idle_nudge_loop(self) -> None:
         """Background loop that checks for idle nudge opportunities."""

@@ -125,28 +125,17 @@ class PlanExecutor:
             result = await provider.complete(
                 model=model,
                 messages=[{"role": "user", "content": (
-                    f"Goal: {goal[:200]}\n"
-                    f"Step instruction: {step_instruction[:200]}\n"
-                    f"Step result (first 500 chars): {result_summary[:500]}"
+                    f"Goal: {goal[:150]}\n"
+                    f"Step: {step_instruction[:150]}\n"
+                    f"Result: {result_summary[:300]}"
                     f"{remaining_desc}\n\n"
-                    f"Answer TWO questions:\n"
-                    f"1. Does this result meaningfully address the step instruction?\n"
-                    f"2. Based on this result, should the remaining plan steps be "
-                    f"adjusted? (e.g. result reveals the goal is already achieved, "
-                    f"or the next steps are now wrong/unnecessary)\n\n"
-                    f"Reply with ONLY one of:\n"
-                    f"RELEVANT\n"
-                    f"RELEVANT-ADJUST: <reason to adjust plan>\n"
-                    f"IRRELEVANT: <reason>"
+                    f"Reply: RELEVANT / RELEVANT-ADJUST: reason / IRRELEVANT: reason"
                 )}],
                 system=(
-                    "You validate task step output and assess plan direction. "
-                    "Be lenient on relevance — partial results are OK. "
-                    "Only say IRRELEVANT if the result is clearly unrelated. "
-                    "Only say ADJUST if the result clearly changes what the "
-                    "remaining steps should do. Most of the time the plan is fine."
+                    "Check if the step result matches the instruction. "
+                    "Reply RELEVANT, RELEVANT-ADJUST: reason, or IRRELEVANT: reason."
                 ),
-                max_tokens=80,
+                max_tokens=50,
             )
             answer = result.text.strip().upper()
 

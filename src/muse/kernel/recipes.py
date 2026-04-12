@@ -354,46 +354,37 @@ class RecipeEngine:
         return True
 
     async def _llm_judge(self, params: dict, context: dict) -> bool:
-        """Ask the LLM whether this recipe should fire."""
-        prompt = params.get("prompt", "Should this recipe fire?")
+        """Evaluate whether a recipe should fire using keyword/presence checks.
+
+        Replaces the LLM call with a deterministic check: looks for
+        required keywords in memory entries and context values.
+        Falls back to True if no keywords are specified (permissive).
+        """
+        required_keywords = params.get("keywords", [])
         namespaces = params.get("context_namespaces", ["_profile"])
 
-        # Gather memory context
+        if not required_keywords:
+            # No keywords specified — always fire (backward compat)
+            return True
+
+        # Gather text from memory + context to search
+        searchable = []
         repo = self._registry.get("memory_repo")
-        memory_parts = []
-        for ns in namespaces[:3]:  # cap at 3 namespaces
+        for ns in namespaces[:3]:
             try:
                 entries = await repo.get_by_relevance(namespace=ns, limit=10, min_score=0.0)
                 for e in entries[:5]:
                     val = (e.get("value") or "").strip()
                     if val and not val.startswith("{"):
-                        memory_parts.append(f"[{ns}] {e.get('key', '')}: {val}")
+                        searchable.append(val.lower())
             except Exception:
                 pass
 
-        memory_ctx = "\n".join(memory_parts) if memory_parts else "No relevant memories."
+        for v in context.values():
+            searchable.append(str(v)[:200].lower())
 
-        # Include trigger context
-        ctx_str = json.dumps({k: str(v)[:200] for k, v in context.items()}, indent=2)
-
-        model = await self._registry.get("model_router").resolve_model()
-        try:
-            result = await self._registry.get("provider").complete(
-                model=model,
-                messages=[{"role": "user", "content": (
-                    f"Context:\n{memory_ctx}\n\n"
-                    f"Trigger data:\n{ctx_str}\n\n"
-                    f"Question: {prompt}\n\n"
-                    f"Answer YES or NO only."
-                )}],
-                system="You are a relevance judge. Answer YES or NO only.",
-                max_tokens=10,
-            )
-            answer = result.text.strip().upper()
-            return answer.startswith("YES")
-        except Exception as e:
-            logger.debug("LLM judge failed: %s", e)
-            return False
+        combined = " ".join(searchable)
+        return any(kw.lower() in combined for kw in required_keywords)
 
     # ── Action execution ─────────────────────────────────────────
 

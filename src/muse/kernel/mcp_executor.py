@@ -105,8 +105,14 @@ class MCPExecutor:
         )
 
         # Short, clean text — pass through
-        if len(stripped) < 150 and not _looks_structured:
+        if len(stripped) < 300 and not _looks_structured:
             return stripped
+
+        # Error-like output — pass through, don't waste an LLM call
+        _error_markers = ("error", "exception", "traceback", "failed", "not found")
+        first_line = stripped.split("\n")[0].lower()
+        if any(m in first_line for m in _error_markers):
+            return stripped[:2000]
 
         # Long or structured — enrich
         return await self._enrich_response(
@@ -245,6 +251,37 @@ class MCPExecutor:
             # ── LLM argument extraction ──────────────────────────
             input_schema = tool_schema.get("inputSchema", {})
             required_fields = input_schema.get("required", [])
+            schema_props = input_schema.get("properties", {})
+
+            # Fast path: no parameters needed — skip LLM call entirely
+            if not schema_props:
+                arguments = {}
+                model = await model_router.resolve_model()
+                # Jump straight to tool call
+                result = await mcp_manager.call_tool(server_id, tool_name, arguments)
+                if result.get("isError"):
+                    await task_manager.update_status(
+                        task_id, "failed",
+                        error=result.get("content", "MCP tool call failed"),
+                    )
+                else:
+                    content = result.get("content", "")
+                    if enrichment_mode == "never":
+                        summary = content[:2000] if content else "Done."
+                    elif enrichment_mode == "always":
+                        summary = await self._enrich_response(
+                            provider, model, user_message, tool_name, content,
+                        )
+                    else:
+                        summary = await self._maybe_enrich(
+                            provider, model, user_message, tool_name, content,
+                        )
+                    await task_manager.update_status(
+                        task_id, "completed",
+                        result={"summary": summary, "payload": content},
+                    )
+                return
+
             model = await model_router.resolve_model()
 
             # Build context based on context_mode

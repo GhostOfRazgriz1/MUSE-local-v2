@@ -209,35 +209,14 @@ class SemanticIntentClassifier:
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=300,
                 system=(
-                    "You are a routing classifier for an AI agent. Your job is to "
-                    "decide which skill(s) should handle the user's request.\n\n"
-                    "DECISION FRAMEWORK:\n"
-                    "1. Focus on the user's INTENT, not keywords. 'Create a mathematical "
-                    "breakdown document' is a writing task (Files/Notes), not a coding "
-                    "task, even though it mentions math.\n"
-                    "2. A skill should only be used if the user wants its SPECIFIC "
-                    "capability — not because the topic is vaguely related.\n"
-                    "3. Code Runner is ONLY for executing code the user provides or "
-                    "for live computation (math, data processing, unit conversion). "
-                    "'Write/create/build me a game/app/script' is a FILES task — the "
-                    "user wants a saved file, not ephemeral execution output.\n"
-                    "4. If the user wants to CREATE content (reports, summaries, documents, "
-                    "breakdowns, analyses, programs, games), use Files to write it or "
-                    "Notes to save it.\n"
-                    "5. When in doubt between two skills, use 'clarify' to ask the user "
-                    "a SHORT question (one sentence). Only clarify when the ambiguity "
-                    "would lead to a meaningfully different action — don't clarify "
-                    "trivial details or things the skill can decide on its own.\n"
-                    "6. If the request is clearly conversational, a continuation of an "
-                    "ongoing chat, or you're unsure, use 'none' and let the agent "
-                    "respond directly.\n"
-                    "7. Use 'goal' when the user gives a high-level objective requiring "
-                    "4+ steps (research + analysis + output). Use 'multi' for simple "
-                    "2-3 skill combinations like 'search X and save a note'.\n"
-                    "8. The user may write in ANY language. Match their intent to skills "
-                    "regardless of language — skill descriptions are in English but the "
-                    "user's message may not be.\n\n"
-                    "Reply with ONLY valid JSON, no markdown, no explanation."
+                    "Route the user's request to the right skill. Rules:\n"
+                    "- 'none': chat, greetings, questions, or unclear intent\n"
+                    "- 'single': one skill handles it\n"
+                    "- 'multi': 2-3 skills needed (e.g. search + save)\n"
+                    "- 'goal': complex 4+ step objective\n"
+                    "- 'clarify': ambiguous, ask ONE question\n"
+                    "- Code Runner = run/compute code. Creating files = Files skill.\n"
+                    "Reply with ONLY valid JSON."
                 ),
             )
 
@@ -376,6 +355,18 @@ class SemanticIntentClassifier:
         # Single action — no need for a second LLM call
         if len(actions) == 1:
             return actions[0]["id"]
+
+        # Two actions where one is "configure"/"setup" — heuristic match
+        # to avoid an LLM call for the common run-vs-configure pattern.
+        if len(actions) == 2:
+            ids = {a["id"] for a in actions}
+            config_ids = ids & {"configure", "setup", "config", "settings"}
+            if config_ids:
+                msg_lower = user_message.lower()
+                if any(w in msg_lower for w in ("config", "setup", "setting", "api key", "change key")):
+                    return config_ids.pop()
+                # Default to the non-config action
+                return (ids - config_ids).pop()
 
         action_lines = "\n".join(
             f"  - {a['id']}: {a['description']}" for a in actions

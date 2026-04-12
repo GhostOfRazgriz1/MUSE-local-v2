@@ -408,7 +408,7 @@ class TestStepExecution:
         ])
         provider.set_default_response(plan)
         # After plan generation, the next LLM call is relevance check — return IRRELEVANT
-        provider.add_response("does this result", "IRRELEVANT: content is about greeting etiquette")
+        provider.add_response("step result", "IRRELEVANT: content is about greeting etiquette")
 
         registry = _make_registry(provider, None)
         session = _make_session()
