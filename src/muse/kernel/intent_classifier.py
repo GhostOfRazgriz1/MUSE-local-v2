@@ -231,7 +231,16 @@ class SemanticIntentClassifier:
                 raw = re.sub(r"^```\w*\n?", "", raw)
                 raw = re.sub(r"\n?```$", "", raw).strip()
 
-            data = json.loads(raw)
+            # Try to extract JSON if the model returned prose around it
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                # Look for a JSON object embedded in the response
+                json_match = re.search(r'\{[^{}]*"action"[^{}]*\}', raw)
+                if json_match:
+                    data = json.loads(json_match.group())
+                else:
+                    raise
             action = data.get("action", "none")
 
             id_map = self._cached_id_map
