@@ -106,10 +106,24 @@ def reset(skip_confirm: bool = False) -> None:
     if deleted >= 0:
         print(f"  Removed {deleted} credential(s) from OS keyring")
 
-    # 2. Delete entire data directory
+    # 2. Delete entire data directory (retry on Windows file locks)
     print("Deleting data directory...")
-    shutil.rmtree(data_dir)
-    print(f"  Removed {data_dir}")
+    import time
+    for attempt in range(5):
+        try:
+            shutil.rmtree(data_dir)
+            print(f"  Removed {data_dir}")
+            break
+        except PermissionError as e:
+            if attempt < 4:
+                print(f"  File locked, retrying in 2s... ({e})")
+                time.sleep(2)
+            else:
+                print(f"  ERROR: Could not delete {data_dir}")
+                print(f"  {e}")
+                print(f"  Close all MUSE processes and try again, or delete manually:")
+                print(f"    rmdir /s /q \"{data_dir}\"")
+                sys.exit(1)
 
     print("\nReset complete. MUSE will behave as a fresh install on next launch.")
 
