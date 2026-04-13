@@ -6224,6 +6224,38 @@ textarea:focus-visible {
   opacity: 1;
 }
 
+.setup-style-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.setup-style-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.setup-style-btn strong {
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+}
+.setup-style-btn:hover {
+  border-color: var(--accent);
+}
+.setup-style-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
 
 /* ══════════════════════════════════════════════════════════════
    PROACTIVITY UI

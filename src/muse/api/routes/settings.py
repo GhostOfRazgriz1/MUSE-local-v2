@@ -195,6 +195,37 @@ async def test_local_connection(body: dict):
 
 
 # ------------------------------------------------------------------
+# Identity
+# ------------------------------------------------------------------
+
+@router.put("/identity")
+async def set_identity(body: dict, orchestrator=Depends(require_orchestrator)):
+    """Write the agent identity file and reload it."""
+    content = body.get("content", "")
+    if not content.strip():
+        raise HTTPException(400, "Identity content is empty")
+
+    config = get_service("config")
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    config.identity_path.write_text(content, encoding="utf-8")
+
+    # Reload identity in the running orchestrator
+    try:
+        from muse.kernel.identity_editor import load_identity
+        orchestrator._identity = load_identity(config)
+        orchestrator._context_assembler._identity = orchestrator._identity
+        orchestrator._registry.register("identity_text", orchestrator._identity)
+    except Exception as e:
+        logger.warning("Failed to reload identity: %s", e)
+
+    # Mark onboarding as complete
+    if hasattr(orchestrator, "_onboarding") and orchestrator._onboarding:
+        orchestrator._onboarding._done = True
+
+    return {"status": "saved"}
+
+
+# ------------------------------------------------------------------
 # Generic settings
 # ------------------------------------------------------------------
 
