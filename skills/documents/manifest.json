@@ -1,5 +1,5 @@
 {
-    "name": "Documents",
+    "name": "File Reader",
     "version": "0.1.0",
     "description": "Read and analyze EXISTING local files: answer questions about file contents, search text within files, summarize existing documents. ONLY for reading existing files, NOT for creating or writing new content — use Files for that.",
     "category": "knowledge",
