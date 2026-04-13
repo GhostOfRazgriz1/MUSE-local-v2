@@ -1,7 +1,7 @@
 {
     "name": "Files",
     "version": "0.3.0",
-    "description": "Filesystem operations: read, write, edit, copy, move, delete files and directories. Create content, save conversation results to disk.",
+    "description": "Create, write, and edit files. Save documents, reports, summaries, code, and notes to disk. Also: read, copy, move, delete files and directories.",
     "category": "files",
     "author": "MUSE",
     "permissions": ["file:read", "file:write", "memory:read", "memory:write"],

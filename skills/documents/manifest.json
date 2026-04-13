@@ -1,7 +1,7 @@
 {
     "name": "Documents",
     "version": "0.1.0",
-    "description": "Read and analyze local files and documents: answer questions about file contents, search text within files, summarize documents. Use when the user asks about what's IN a file, not when they want to create or write files.",
+    "description": "Read and analyze EXISTING local files: answer questions about file contents, search text within files, summarize existing documents. ONLY for reading existing files, NOT for creating or writing new content — use Files for that.",
     "category": "knowledge",
     "author": "MUSE",
     "permissions": ["file:read", "memory:read", "memory:write"],
