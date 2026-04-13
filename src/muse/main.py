@@ -62,85 +62,61 @@ async def create_orchestrator(config: Config | None = None):
     trust_budget = TrustBudgetManager(db)
     permission_manager = PermissionManager(permission_repo, trust_budget)
 
-    # LLM Providers
+    # LLM Providers — local-only build
     from muse.config import BUILTIN_PROVIDERS
-    from muse.providers.openrouter import OpenRouterProvider
-    from muse.providers.openai_compat import OpenAICompatibleProvider
-    from muse.providers.anthropic import AnthropicProvider
+    from muse.providers.local import LocalProvider
     from muse.providers.registry import ProviderRegistry
     from muse.providers.model_router import ModelRouter
 
-    # Credential vault — the sole source of truth for API keys.
-    # Keys are managed via Settings > Models > API Keys in the UI.
     from muse.credentials.vault import CredentialVault
-
     credential_vault = CredentialVault(db)
 
-    # OpenRouter is the fallback for any model prefix without a direct provider.
-    openrouter_key = await credential_vault.retrieve("openrouter_api_key") or ""
-    openrouter = OpenRouterProvider(
-        api_key=openrouter_key, base_url=BUILTIN_PROVIDERS["openrouter"].base_url,
-    )
-    if openrouter_key:
-        logger.info("Loaded OpenRouter key from vault")
-    else:
-        logger.info("No OpenRouter key configured — add one in Settings")
+    # Local provider is the only provider and the fallback.
+    local_def = BUILTIN_PROVIDERS["local"]
 
-    registry = ProviderRegistry(fallback=openrouter)
-
-    # Register direct providers from vault.
-    for prefix, pdef in BUILTIN_PROVIDERS.items():
-        if prefix == "openrouter":
-            continue  # already the fallback
-        # Local provider: no API key needed — register unconditionally
-        if not pdef.env_var:
-            from muse.providers.local import LocalProvider
-            local_prov = LocalProvider(base_url=pdef.base_url, name=pdef.name)
-            registry.register(prefix, local_prov)
-            logger.info("Registered local LLM provider: %s (%s)", prefix, pdef.base_url)
-            continue
-        stored_key = await credential_vault.retrieve(f"{prefix}_api_key")
-        if not stored_key:
-            continue
-        if pdef.api_style == "anthropic":
-            registry.register(prefix, AnthropicProvider(api_key=stored_key))
-        else:
-            registry.register(
-                prefix,
-                OpenAICompatibleProvider(
-                    name=pdef.name,
-                    api_key=stored_key,
-                    base_url=pdef.base_url,
-                    env_var=pdef.env_var,
-                ),
-            )
-        logger.info("Loaded %s key from vault", prefix)
-
-    # Register custom providers from user_settings.
+    # Check if user has configured a custom address/port via settings
     try:
         import json as _json
+        async with db.execute(
+            "SELECT value FROM user_settings WHERE key = 'local_server'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row:
+            local_cfg = _json.loads(row[0])
+            local_url = f"http://{local_cfg.get('address', 'localhost')}:{local_cfg.get('port', 11434)}/v1"
+        else:
+            local_url = local_def.base_url
+    except Exception:
+        local_url = local_def.base_url
+
+    local_prov = LocalProvider(base_url=local_url, name="local")
+    registry = ProviderRegistry(fallback=local_prov)
+    registry.register("local", local_prov)
+    logger.info("Registered local LLM provider: %s", local_url)
+
+    # Custom providers are not used in the local-only build, but the
+    # block is kept for compatibility if someone adds one via settings.
+    try:
         async with db.execute(
             "SELECT value FROM user_settings WHERE key = 'custom_providers'"
         ) as cursor:
             row = await cursor.fetchone()
         if row:
+            from muse.providers.openai_compat import OpenAICompatibleProvider
             custom_providers = _json.loads(row[0])
             for cp in custom_providers:
                 cp_id = cp["id"]
                 stored_key = await credential_vault.retrieve(f"{cp_id}_api_key")
                 if not stored_key:
                     continue
-                if cp.get("api_style") == "anthropic":
-                    registry.register(cp_id, AnthropicProvider(api_key=stored_key))
-                else:
-                    registry.register(
-                        cp_id,
-                        OpenAICompatibleProvider(
-                            name=cp["name"],
-                            api_key=stored_key,
-                            base_url=cp["base_url"],
-                        ),
-                    )
+                registry.register(
+                    cp_id,
+                    OpenAICompatibleProvider(
+                        name=cp["name"],
+                        api_key=stored_key,
+                        base_url=cp["base_url"],
+                    ),
+                )
                 logger.info("Loaded custom provider '%s' from vault", cp_id)
     except Exception as e:
         logger.debug("Custom provider loading skipped: %s", e)
