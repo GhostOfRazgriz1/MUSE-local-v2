@@ -1196,9 +1196,17 @@ class Kernel:
             if summary:
                 classify_context = summary
             elif recent:
+                # Exclude greeting/system messages from classifier context —
+                # they confuse small local models into treating skill requests
+                # as conversational follow-ups.
+                _real_turns = [
+                    t for t in recent[-6:]
+                    if not t.get("content", "").startswith("[")
+                    and t.get("role") != "system"
+                ]
                 classify_context = "\n".join(
                     f"{t['role']}: {t['content'][:150]}"
-                    for t in recent[-6:]
+                    for t in _real_turns
                 )
             else:
                 classify_context = ""

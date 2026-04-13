@@ -162,7 +162,20 @@ class LocalProvider(OpenAICompatibleProvider):
     # Override complete to provide better errors for local servers
     # ------------------------------------------------------------------
 
+    async def _resolve_auto(self, model: str) -> str:
+        """Resolve 'auto' to the first available model."""
+        if model != "auto":
+            return model
+        if self._model_cache is None:
+            await self.list_models()
+        if self._model_cache:
+            resolved = next(iter(self._model_cache))
+            logger.info("Resolved model 'auto' → %s", resolved)
+            return resolved
+        raise ProviderError("No models available on local server")
+
     async def complete(self, model, messages, max_tokens=1000, system=None, json_mode=False):
+        model = await self._resolve_auto(model)
         try:
             return await super().complete(
                 model=model,
