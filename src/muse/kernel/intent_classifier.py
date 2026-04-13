@@ -238,6 +238,8 @@ class SemanticIntentClassifier:
 
             if action == "single":
                 raw_skill = data.get("skill", "").strip().lower()
+                logger.info("Resolving skill %r against id_map keys: %s",
+                            raw_skill, sorted(id_map.keys())[:20])
                 resolved = (
                     id_map.get(raw_skill)
                     or id_map.get(raw_skill.replace("_", " "))
