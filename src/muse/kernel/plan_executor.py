@@ -135,7 +135,7 @@ class PlanExecutor:
                     "Check if the step result matches the instruction. "
                     "Reply RELEVANT, RELEVANT-ADJUST: reason, or IRRELEVANT: reason."
                 ),
-                max_tokens=50,
+                max_tokens=100,
             )
             answer = result.text.strip().upper()
 
@@ -234,7 +234,7 @@ class PlanExecutor:
                     f"User steering: {combined}"
                 )},
             ],
-            max_tokens=800,
+            max_tokens=1200,
         )
 
         raw = plan_result.text.strip()
@@ -335,7 +335,7 @@ class PlanExecutor:
                 )},
                 {"role": "user", "content": user_message},
             ],
-            max_tokens=1000,
+            max_tokens=1500,
         )
 
         raw = plan_result.text.strip()

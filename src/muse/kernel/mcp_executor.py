@@ -317,7 +317,7 @@ class MCPExecutor:
                     "Extract tool arguments from the user's request. "
                     "Reply with ONLY valid JSON matching the schema."
                 ),
-                max_tokens=500,
+                max_tokens=800,
             )
             self._session.track_llm_usage(
                 arg_result.tokens_in, arg_result.tokens_out,

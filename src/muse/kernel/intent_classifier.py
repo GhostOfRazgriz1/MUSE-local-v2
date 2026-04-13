@@ -207,7 +207,7 @@ class SemanticIntentClassifier:
             result = await self._provider.complete(
                 model=self._default_model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=300,
+                max_tokens=500,
                 system=(
                     "Route the user's request to the right skill. Rules:\n"
                     "- 'none': chat, greetings, questions, or unclear intent\n"
@@ -404,7 +404,7 @@ class SemanticIntentClassifier:
                     f"Available actions:\n{action_lines}\n\n"
                     f"Which action best matches? Reply with ONLY the action id."
                 )}],
-                max_tokens=20,
+                max_tokens=50,
                 system=(
                     "Pick the best action for the user's request. "
                     "Reply with ONLY the action id (e.g. \"create\" or \"list\"). "
