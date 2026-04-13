@@ -262,7 +262,7 @@ class SemanticIntentClassifier:
 
             elif action == "multi":
                 raw_tasks = data.get("sub_tasks", [])
-                if len(raw_tasks) >= 2:
+                if raw_tasks:
                     sub_tasks: list[SubTask] = []
                     skill_ids: list[str] = []
                     for rt in raw_tasks:
@@ -296,6 +296,19 @@ class SemanticIntentClassifier:
                             mode=ExecutionMode.MULTI_DELEGATED,
                             skill_ids=skill_ids,
                             sub_tasks=sub_tasks,
+                            task_description=user_message,
+                            model_override=model_override,
+                            confidence=1.0,
+                        )
+                    # Model returned "multi" with only 1 task — downgrade
+                    # to single delegation instead of falling to inline.
+                    if len(sub_tasks) == 1:
+                        st = sub_tasks[0]
+                        logger.info("LLM multi→single downgrade: %s", st.skill_id)
+                        return ClassifiedIntent(
+                            mode=ExecutionMode.DELEGATED,
+                            skill_id=st.skill_id,
+                            action=st.action,
                             task_description=user_message,
                             model_override=model_override,
                             confidence=1.0,
