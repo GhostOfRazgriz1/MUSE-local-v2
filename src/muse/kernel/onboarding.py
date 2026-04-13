@@ -156,7 +156,7 @@ class OnboardingFlow:
             model=self._model,
             messages=self._history,
             system=self._system_prompt(),
-            max_tokens=1500,
+            max_tokens=2500,
         )
         reply = result.text.strip()
         self._history.append({"role": "assistant", "content": reply})
