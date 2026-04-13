@@ -1,7 +1,7 @@
 {
     "name": "Search",
     "version": "0.3.0",
-    "description": "Search the web for information, look things up online, research topics. Ask about anything: people, places, facts, current events, technical questions.",
+    "description": "Search for information. Use for ANY question, lookup, or research request — 'search for X', 'find X', 'what is X', 'look up X'. This is the DEFAULT skill for finding information.",
     "category": "search",
     "author": "MUSE",
     "permissions": ["web:fetch", "memory:read", "memory:write", "credential:read"],

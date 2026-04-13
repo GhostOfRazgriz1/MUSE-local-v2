@@ -1,7 +1,7 @@
 {
     "name": "Webpage Reader",
     "version": "0.1.0",
-    "description": "Read and extract text content from web pages. Fetch a URL, parse the HTML, and return clean readable text for summarization or analysis. Use when the user provides a link or asks to read a webpage.",
+    "description": "Read a specific URL. ONLY use when the user provides a link (https://...). Do NOT use for searching — use Search instead. Fetches and extracts text from a given webpage URL.",
     "category": "search",
     "author": "MUSE",
     "permissions": ["web:fetch", "memory:read", "memory:write"],
