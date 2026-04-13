@@ -56,6 +56,15 @@ class GreetingService:
         asyncio.create_task(recipe_engine.on_session_connect())
 
         # ── Instant static placeholder ────────────────────────
+        # Re-read identity from disk in case it was just written by the
+        # setup card (the registry may still have the old/default text).
+        config = self._registry.get("config")
+        try:
+            fresh = config.identity_path.read_text(encoding="utf-8")
+            self._registry.register("identity_text", fresh)
+        except FileNotFoundError:
+            pass
+
         agent_name = self.parse_identity_field("name") or "MUSE"
         static_text = self.parse_identity_field("greeting") or f"Hey! {agent_name} here."
         yield {
