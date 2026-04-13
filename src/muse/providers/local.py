@@ -162,17 +162,33 @@ class LocalProvider(OpenAICompatibleProvider):
     # Override complete to provide better errors for local servers
     # ------------------------------------------------------------------
 
+    # Models known to use thinking/reasoning mode that wastes tokens
+    # on chain-of-thought before producing the actual answer.
+    _THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1")
+
     async def _resolve_auto(self, model: str) -> str:
-        """Resolve 'auto' to the first available model."""
+        """Resolve 'auto' to the best available model.
+
+        Prefers non-thinking models (gemma, llama, phi, mistral) over
+        thinking models (qwen3, qwq) since thinking mode burns tokens
+        on chain-of-thought and often exceeds the token budget.
+        """
         if model != "auto":
             return model
         if self._model_cache is None:
             await self.list_models()
-        if self._model_cache:
-            resolved = next(iter(self._model_cache))
-            logger.info("Resolved model 'auto' → %s", resolved)
-            return resolved
-        raise ProviderError("No models available on local server")
+        if not self._model_cache:
+            raise ProviderError("No models available on local server")
+
+        # Prefer non-thinking models
+        candidates = list(self._model_cache.keys())
+        non_thinking = [
+            m for m in candidates
+            if not any(p in m.lower() for p in self._THINKING_MODEL_PATTERNS)
+        ]
+        resolved = non_thinking[0] if non_thinking else candidates[0]
+        logger.info("Resolved model 'auto' → %s", resolved)
+        return resolved
 
     async def complete(self, model, messages, max_tokens=1000, system=None, json_mode=False):
         model = await self._resolve_auto(model)
