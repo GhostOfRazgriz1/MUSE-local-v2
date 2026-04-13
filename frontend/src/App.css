@@ -6122,6 +6122,108 @@ textarea:focus-visible {
   line-height: 1.5;
 }
 
+/* ─── Local setup card fields ─── */
+
+.setup-field {
+  margin-bottom: 16px;
+  text-align: left;
+}
+
+.setup-field-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.setup-field-row .setup-field {
+  flex: 1;
+  margin-bottom: 0;
+}
+.setup-field-port {
+  max-width: 120px;
+}
+
+.setup-input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  outline: none;
+  transition: border-color var(--transition-fast);
+  box-sizing: border-box;
+}
+.setup-input:focus {
+  border-color: var(--accent);
+}
+.setup-input-sm {
+  width: 80px;
+}
+
+.setup-test-btn {
+  margin-bottom: 12px;
+}
+
+.setup-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  padding: 8px 12px;
+  border-radius: var(--radius-md, 8px);
+  margin-bottom: 16px;
+}
+.setup-status-ok {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+}
+.setup-status-err {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: var(--error);
+}
+
+.setup-model-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.setup-model-row .setup-input {
+  flex: 1;
+}
+
+.setup-model-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.setup-model-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-radius: var(--radius-full, 999px);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+.setup-model-tag button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.6;
+}
+.setup-model-tag button:hover {
+  opacity: 1;
+}
+
 
 /* ══════════════════════════════════════════════════════════════
    PROACTIVITY UI
