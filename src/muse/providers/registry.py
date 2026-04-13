@@ -115,8 +115,10 @@ class ProviderRegistry:
         for batch in results:
             all_models.extend(batch)
 
-        # Fallback provider (e.g. OpenRouter) — IDs are already fully-qualified.
-        if self._fallback is not None:
+        # Fallback provider — IDs are already fully-qualified.
+        # Skip if fallback is also a registered provider (avoids duplicates
+        # in local-only builds where the local provider is both).
+        if self._fallback is not None and self._fallback not in self._providers.values():
             try:
                 direct_ids = {m.id for m in all_models}
                 for m in await self._fallback.list_models():
