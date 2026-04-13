@@ -131,7 +131,7 @@ def _friendly_error(raw: str) -> str:
 
 
 _VALID_MOODS = {"curious", "amused", "excited", "concerned", "neutral"}
-_MOOD_TAG_RE = re.compile(r"\[mood:(\w+)\]\s*$")
+_MOOD_TAG_RE = re.compile(r"\[mood:\s*(\w+)\s*\]\s*$")
 
 
 def extract_mood_tag(text: str) -> tuple[str, str | None]:
