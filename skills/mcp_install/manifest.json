@@ -1,7 +1,7 @@
 {
     "name": "MCP Install",
     "version": "0.1.0",
-    "description": "Install MCP servers from a GitHub URL or search for MCP tools to extend the agent's capabilities. Use when the user wants to add new tools, connect external services, or asks about available MCP servers.",
+    "description": "Install MCP servers. Use when the user says 'install this MCP', pastes a GitHub URL for an MCP server, or wants to add/connect external tools. NOT Shell — this handles MCP setup automatically.",
     "category": "system",
     "author": "MUSE",
     "permissions": ["web:fetch"],
