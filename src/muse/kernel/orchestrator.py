@@ -547,19 +547,28 @@ class Kernel:
             manifest = skill.get("manifest", {})
             creds = manifest.get("credentials", [])
             if creds:
-                # Check if at least one credential is in the vault
-                has_any = False
-                for c in creds:
-                    cred_id = c.get("id") if isinstance(c, dict) else getattr(c, "id", "")
-                    if cred_id and await self._vault.retrieve_raw(cred_id):
-                        has_any = True
-                        break
-                if not has_any:
-                    logger.debug(
-                        "Skipping skill %s in classifier (no credentials configured)",
-                        skill["skill_id"],
-                    )
-                    continue
+                # If ALL credentials are optional (required=false), register
+                # the skill anyway — it has a free fallback (e.g. Search uses
+                # DuckDuckGo when no API key is configured).
+                all_optional = all(
+                    not (c.get("required", True) if isinstance(c, dict)
+                         else getattr(c, "required", True))
+                    for c in creds
+                )
+                if not all_optional:
+                    # At least one credential is required — check vault
+                    has_any = False
+                    for c in creds:
+                        cred_id = c.get("id") if isinstance(c, dict) else getattr(c, "id", "")
+                        if cred_id and await self._vault.retrieve_raw(cred_id):
+                            has_any = True
+                            break
+                    if not has_any:
+                        logger.debug(
+                            "Skipping skill %s in classifier (no credentials configured)",
+                            skill["skill_id"],
+                        )
+                        continue
             self._classifier.register_skill(
                 skill_id=skill["skill_id"],
                 name=manifest.get("name", skill["skill_id"]),
